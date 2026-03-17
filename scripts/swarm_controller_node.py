@@ -106,7 +106,15 @@ class SwarmControllerNode():
         self.cmd_vel_publisher = rospy.Publisher('/swarm/cmd_vel', Vector3StampedArray, queue_size=1)
         
         threading.Thread(target=self.continuous_input_prompt, daemon=True).start()
+        # 🌟 注册关机清屏钩子
+        rospy.on_shutdown(self.cleanup_environment)
 
+    def cleanup_environment(self):
+        """🚀 当节点被正常结束 或 Ctrl+C 强制退出时，自动触发"""
+        print("\n[*] 🧹 [FMS] Cleaning up environment... Clearing Unity screen.")
+        rospy.set_param('/swarm_num_drones', 0) # 告诉 test.py 清屏
+        sys.stdout.flush()
+        
     def callback_state(self, msg:Vector3StampedArray):
         poses = np.array([[p.x, p.y, p.z] for p in msg.vector])
         

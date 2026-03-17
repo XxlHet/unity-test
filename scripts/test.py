@@ -34,19 +34,18 @@ class SwarmSimulationNode():
         rospy.Timer(rospy.Duration(1.0/RATE), self.timer_publish)
 
     def check_param_update(self, event):
-        # 🚀 [FMS 模块]: 优先检查是否有强制重置信号
-        if rospy.has_param('/swarm_reset') and rospy.get_param('/swarm_reset'):
-            if self.num_drones > 0:
-                self.respawn_swarm(self.num_drones)
-            rospy.set_param('/swarm_reset', False) 
-            return 
-
         # 🚀 [FMS 模块]: 数量变化检查逻辑
         if rospy.has_param('/swarm_num_drones'):
             new_num = rospy.get_param('/swarm_num_drones')
-            if new_num != self.num_drones and new_num > 0:
+            if new_num != self.num_drones:
                 self.num_drones = new_num
-                self.respawn_swarm(new_num)
+                # 🌟 如果收到 0 的指令，清空矩阵并立刻通报 Unity 清屏！
+                if new_num == 0:
+                    self.swarm = np.array([])
+                    rospy.loginfo("[Simulator] Environment cleared. Waiting for next round...")
+                    self.timer_publish(None) 
+                else:
+                    self.respawn_swarm(new_num)
 
     def respawn_swarm(self, num):
         # 🚀 [FMS 模块]: 精准数量生成与截断。
@@ -82,7 +81,34 @@ class SwarmSimulationNode():
         self.swarm += vels * (1.0/RATE)
 
     def timer_publish(self, event):
-        if len(self.swarm) == 0: return
+        # 🌟 删除了长度拦截，保证即使是空机队，也能把空包裹发给 Unity 让它销毁模型
+        vector = Vector3StampedArray()
+        viz = MarkerArray()
+        unity_poses = PoseArray()
+        unity_poses.header.stamp = rospy.Time.now()
+        unity_poses.header.frame_id = 'map'
+
+        for i, pose in enumerate(self.swarm):
+            p = Vector3(pose[0], pose[1], pose[2])
+            vector.vector.append(p)
+            
+            m = Marker()
+            m.header.stamp, m.header.frame_id = rospy.Time.now(), 'map'
+            m.type, m.id = 2, i
+            m.pose.position.x, m.pose.position.y, m.pose.position.z = pose[0], pose[1], pose[2]
+            m.scale.x = m.scale.y = m.scale.z = 0.2
+            m.color.r, m.color.a = 0.9, 1.0
+            m.lifetime = rospy.Duration(0.1)
+            viz.markers.append(m)
+
+            up = Pose()
+            up.position.x, up.position.y, up.position.z = pose[0], pose[1], pose[2]
+            up.orientation.w = 1.0
+            unity_poses.poses.append(up)
+            
+        self.pose_publisher.publish(vector)
+        self.viz_publisher.publish(viz)
+        self.unity_publisher.publish(unity_poses)
         vector = Vector3StampedArray()
         viz = MarkerArray()
         # 🌟 新增：构建 Unity 画布坐标包
