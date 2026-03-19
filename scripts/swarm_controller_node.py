@@ -95,8 +95,8 @@ class SwarmControllerNode():
         self.home_poses = None  
         self.trigger_return = False 
         
-        self.controller = APFSwarmController(max_vel=1, min_dist=self.safety_baseline)
-        self.controller.log_dir = self.save_dir 
+        self.controller = APFSwarmController(max_vel=0.9, min_dist=self.safety_baseline)  # 🔧 微调：降低全局最高速度
+        self.controller.log_dir = self.save_dir
         self.controller.enable_dca = self.enable_dca
         
         self.model = SDFModel()

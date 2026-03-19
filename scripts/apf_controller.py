@@ -116,17 +116,17 @@ class APFSwarmController():
                 effective_min = np.median(min_dists)
                 effective_min = max(effective_min, 0.02) 
                 
-               # =================================================================
+                # =================================================================
                 # 终极炼丹参数 1: 恒定下压比例 (0.985)
                 # 无论基线是 0.28 还是 0.32，目标永远下压 1.5%。
                 # 这保证了所有无人机永远有一个微小的“向内钻”的冲动，这是产生微震荡的发动机。
                 # =================================================================
-                target_spacing = self.min_dist * 0.985
+                target_spacing = self.min_dist * 1.05  # 🔧 微调：给足呼吸空间
                 
                 # =================================================================
                 # 终极炼丹参数 2: 动态体积界限 [0.45, 1.8]
                 # =================================================================
-                scale = np.clip(target_spacing / effective_min, 0.45, 1.8) 
+                scale = np.clip(target_spacing / effective_min, 0.45, 3.5)  # 🔧 微调：放宽上限防拥挤
                 
                 centroid = np.mean(shape_goals, axis=0)
                 scaled_shape_goals = centroid + (shape_goals - centroid) * scale
@@ -229,8 +229,8 @@ class APFSwarmController():
                     rep_strength = self.p_separation
                     if dist < self.min_dist * 1.0: 
                         penetration = self.min_dist / max(dist, 0.01)
-                        dynamic_mult = np.clip(1.2 * (penetration ** 20), 1.2, 12.0)
-                        rep_strength *= dynamic_mult 
+                        dynamic_mult = np.clip(1.2 * (penetration ** 20), 1.2, 3.0)  # 🔧 微调：最高排斥力压至 3 倍
+                        rep_strength *= dynamic_mult
                         
                     repulsive_mag = rep_strength * (1.0 / safe_dist - 1.0 / self.min_dist) / (safe_dist ** 2 + 0.01)
                     v_rep += repulsive_mag * (p_rel / safe_dist)
@@ -254,7 +254,7 @@ class APFSwarmController():
         # 这赋予了无人机更大的“物理惯性”。在碰到极硬的 20次方弹簧时，
         # 它们会因为惯性产生轻微的过冲（Overshoot）和回弹，从而拉出极具生命力的圆润波浪！
         # =================================================================
-        control_vels = 0.70 * control_vels + 0.30 * self.velocities[:n]
+        control_vels = 0.90 * control_vels + 0.10 * self.velocities[:n]  # 🔧 微调：大幅削弱残余惯性
         
         for k in range(len(control_vels)):
             speed = np.linalg.norm(control_vels[k])

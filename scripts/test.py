@@ -109,35 +109,6 @@ class SwarmSimulationNode():
         self.pose_publisher.publish(vector)
         self.viz_publisher.publish(viz)
         self.unity_publisher.publish(unity_poses)
-        vector = Vector3StampedArray()
-        viz = MarkerArray()
-        # 🌟 新增：构建 Unity 画布坐标包
-        unity_poses = PoseArray()
-        unity_poses.header.stamp = rospy.Time.now()
-        unity_poses.header.frame_id = 'map'
-
-        for i, pose in enumerate(self.swarm):
-            p = Vector3(pose[0], pose[1], pose[2])
-            vector.vector.append(p)
-            
-            m = Marker()
-            m.header.stamp, m.header.frame_id = rospy.Time.now(), 'map'
-            m.type, m.id = 2, i
-            m.pose.position.x, m.pose.position.y, m.pose.position.z = pose
-            m.scale.x = m.scale.y = m.scale.z = 0.2
-            m.color.r, m.color.a = 0.9, 1.0
-            m.lifetime = rospy.Duration(0.1)
-            viz.markers.append(m)
-
-            # 🌟 新增：装载给 Unity 的坐标
-            up = Pose()
-            up.position.x, up.position.y, up.position.z = pose[0], pose[1], pose[2]
-            up.orientation.w = 1.0
-            unity_poses.poses.append(up)
-            
-        self.pose_publisher.publish(vector)
-        self.viz_publisher.publish(viz)
-        self.unity_publisher.publish(unity_poses)
 
 if __name__ == "__main__":
     rospy.init_node('swarm_simulation_node', anonymous=True)
