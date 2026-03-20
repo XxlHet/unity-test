@@ -79,8 +79,14 @@ class SwarmControllerNode():
         
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        # 🌟 分离 DCA 图表和 FMS 轨迹图的文件夹
         self.save_dir = os.path.join(base_dir, 'DCA-result', timestamp)
+        self.fms_dir = os.path.join(base_dir, 'FMS-result', timestamp)
         os.makedirs(self.save_dir, exist_ok=True)
+        os.makedirs(self.fms_dir, exist_ok=True)
+        
+        self.phase_idx = 1 # 🌟 新增：多轮次变换的阶段计数器
         
         print("\n" + "="*60)
         print(f"[*] [ARES] Mode: DCA Enabled = {self.enable_dca}")
@@ -95,8 +101,9 @@ class SwarmControllerNode():
         self.home_poses = None  
         self.trigger_return = False 
         
-        self.controller = APFSwarmController(max_vel=0.9, min_dist=self.safety_baseline)  # 🔧 微调：降低全局最高速度
+        self.controller = APFSwarmController(max_vel=0.9, min_dist=self.safety_baseline)
         self.controller.log_dir = self.save_dir
+        self.controller.fms_dir = self.fms_dir  # 🌟 挂载 FMS 专属输出目录
         self.controller.enable_dca = self.enable_dca
         
         self.model = SDFModel()
@@ -121,7 +128,10 @@ class SwarmControllerNode():
         # 🌟 获取模拟器中全部的机队网格坐标，作为永久的大本营
         if self.home_poses is None and len(poses) >= self.fleet_capacity:
             self.home_poses = poses[:self.fleet_capacity].copy()
+            self.controller.global_home_poses = self.home_poses.copy() # 🌟 新增：把全局基地给控制器备份一份用来画图
             print(f"[*] [FMS] Captured home grid for {self.fleet_capacity} drones. Fleet ready for dispatch.")
+            # 🌟 新增：触发绘制 "第 0 张：待命网格灰点图"
+            self.controller.generate_idle_report(self.home_poses)
             sys.stdout.flush()
             
         if getattr(self, 'trigger_return', False):
@@ -135,18 +145,17 @@ class SwarmControllerNode():
         if self.start_poses is None:
             if self.home_poses is None: return # 等待环境加载
             
-            # 计算本次调度牵涉到的无人机总数 (当前需要的 vs 原本在天上需要返航的)
-            active_drones = max(self.prev_active_drones, self.shape_drones)
+            # 🌟 核心修复：更新历史最高出动水位！只要起飞过，就永远纳入 APF 管控，防止孤儿！
+            self.prev_active_drones = max(self.prev_active_drones, self.shape_drones)
             
             self.controller.distribute_goals(
                 poses, 
                 self.goals, 
                 shape_num=self.shape_drones, 
-                active_num=active_drones
+                active_num=self.prev_active_drones # 始终调度水位线以下的全部无人机
             ) 
             self.start_poses = poses
-            # 记录本次飞行的活跃状态，用于下一轮判断
-            self.prev_active_drones = self.shape_drones
+            
 
         vels = self.controller.get_control(poses)
         cmd_vel = Vector3StampedArray()
@@ -210,11 +219,15 @@ class SwarmControllerNode():
         sys.stdout.flush()
         
         self.trigger_return = True
+        self.controller.trajectory_log.clear()       # 🌟 新增：清空准备记录纯返航轨迹
+        self.controller.phase_start_time = time.time() # 🌟 新增
         self.controller.current_log_name = "" 
         self.is_running = True
         
         self.get_input("\n>>> [SRM] Press 'Enter' when all drones have landed safely to power off...", "")
         self.is_running = False
+        # 🌟 新增：生成全员落地灰点图
+        self.controller.generate_fms_srm_report("Global_Return", self.phase_idx)
         print("🛑 [ARES] System powered off successfully.")
         sys.stdout.flush()
         rospy.signal_shutdown("Experiment finished")
@@ -245,6 +258,9 @@ class SwarmControllerNode():
             
             self.controller.is_returning = False
             self.process_user_input(user_input)
+            self.controller.trajectory_log.clear()
+            self.controller.phase_start_time = time.time()
+            self.start_poses = None
             self.start_poses = None
             self.is_running = True 
             
@@ -263,6 +279,9 @@ class SwarmControllerNode():
             self.is_running = False 
             
             self.controller.generate_plots()
+            # 🌟 新增：生成 FMS 轨迹图
+            self.controller.generate_fms_srm_report(shape_name, self.phase_idx)
+            self.phase_idx += 1
             
             cont = self.get_input("\n>>> [ARES] Do you want to try another shape? (y/n): ", "n")
             if cont.lower() != 'y':
