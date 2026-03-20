@@ -420,24 +420,31 @@ class APFSwarmController():
             if 1 in states: 
                 line = drone_data[drone_data['State'] == 1]
                 lbl1 = "FMS Dispatch" if "Disp" not in plotted else ""
-                ax1.plot(line['X'], line['Y'], line['Z'], color='#3498DB', alpha=0.5, label=lbl1)
-                # 终点标记：高亮的绿色星型 🌟
+                # 🔧 优化：极细、高透明的轨迹线，塑造“能量流”的感觉，不遮挡主体
+                ax1.plot(line['X'], line['Y'], line['Z'], color='#3498DB', alpha=0.2, linewidth=0.8, label=lbl1)
+                
+                # 🔧 优化：缩小星型标记，加入深绿色描边(edgecolor)，让紧密挨在一起的星星层次分明
                 end_pt = line.iloc[-1]
                 lbl_star = "Shape Node" if "Star" not in plotted else ""
-                ax1.scatter(end_pt['X'], end_pt['Y'], end_pt['Z'], color='#2ECC71', marker='*', s=150, zorder=5, label=lbl_star)
+                ax1.scatter(end_pt['X'], end_pt['Y'], end_pt['Z'], color='#2ECC71', edgecolor='#196F3D', linewidth=0.5, marker='*', s=80, zorder=5, label=lbl_star)
                 plotted.update(["Disp", "Star"])
             
             # == 状态 2：被 FMS 踢出或触发 SRM 返航 ==
             if 2 in states: 
                 line = drone_data[drone_data['State'] == 2]
                 lbl2 = "SRM Return" if "Ret" not in plotted else ""
-                ax1.plot(line['X'], line['Y'], line['Z'], color='#E74C3C', alpha=0.5, linestyle=':', label=lbl2)
-                # 终点标记：回到地面的灰色点 ⚪
+                # 🔧 优化：细虚线，降低返航轨迹的视觉抢占率
+                ax1.plot(line['X'], line['Y'], line['Z'], color='#E74C3C', alpha=0.25, linestyle=':', linewidth=1.0, label=lbl2)
+                
+                # 🔧 优化：缩小地面灰点并加深色描边
                 end_pt = line.iloc[-1]
                 lbl_dot = "Landed/Idle" if "Dot" not in plotted else ""
-                ax1.scatter(end_pt['X'], end_pt['Y'], end_pt['Z'], color='gray', marker='o', s=50, zorder=5, label=lbl_dot)
+                ax1.scatter(end_pt['X'], end_pt['Y'], end_pt['Z'], color='lightgray', edgecolor='gray', linewidth=0.8, marker='o', s=35, zorder=5, label=lbl_dot)
                 plotted.update(["Ret", "Dot"])
 
+        # 🔧 优化：调整 3D 摄像机默认视角，微抬高一点，侧一点，能更好地看清立方体/球体的体积感
+        ax1.view_init(elev=25, azim=40)
+        
         ax1.set_xlabel('X (m)'); ax1.set_ylabel('Y (m)'); ax1.set_zlabel('Z (m)')
         ax1.legend()
 
