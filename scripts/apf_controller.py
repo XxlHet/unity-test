@@ -186,6 +186,9 @@ class APFSwarmController():
         self.goals = out_goals
 
     def get_control(self, poses) -> None:
+        # 🌟 新增：记录单步计算起始时间，用于评测算法实时性
+        step_start_time = time.time()
+        
         n = min(self.goals.shape[0], poses.shape[0])
         poses = poses[:n]
         if self.velocities is None:
@@ -307,7 +310,8 @@ class APFSwarmController():
                 try:
                     with open(full_path, mode='w', newline='') as file:
                         writer = csv.writer(file)
-                        writer.writerow(["Time(s)", "Min_Distance(m)", "Avg_Velocity(m/s)", "Target_Error(m)"])
+                        # 🌟 新增：在表头加入计算耗时与碰撞次数
+                        writer.writerow(["Time(s)", "Min_Distance(m)", "Avg_Velocity(m/s)", "Target_Error(m)", "Comp_Time(ms)", "Collisions"])
                     self.start_time = time.time()
                     self.csv_initialized = True
                 except Exception:
@@ -329,10 +333,16 @@ class APFSwarmController():
             avg_v = round(np.mean(np.linalg.norm(eval_vels, axis=1)), 4)
             err = round(np.mean(np.linalg.norm(eval_goals - eval_poses, axis=1)), 4)
 
+            # 🌟 新增：计算本帧耗时 (毫秒)
+            step_comp_time_ms = (time.time() - step_start_time) * 1000.0
+            # 🌟 新增：判断本帧是否发生物理碰撞 (设定物理半径 0.3m)
+            current_collisions = 1 if (0 < min_d < 0.3) else 0
+
             try:
                 with open(full_path, mode='a', newline='') as file:
                     writer = csv.writer(file)
-                    writer.writerow([curr_t, min_d, avg_v, err])
+                    # 🌟 新增：将两个新指标追加写入
+                    writer.writerow([curr_t, min_d, avg_v, err, round(step_comp_time_ms, 2), current_collisions])
             except:
                 pass 
         return control_vels
@@ -345,17 +355,25 @@ class APFSwarmController():
         print(f"\n[*] Generating plots for [{algo_label}] mode...")
         try:
             df = pd.read_csv(self.last_csv_path)
+            # 🌟 新增：扩充指标字典，加入计算耗时与碰撞次数
             metrics = {
                 'Target_Error(m)': ('Convergence Error Comparison', 'Mean Error (m)', '#2ECC71' if self.enable_dca else '#E74C3C'),
                 'Min_Distance(m)': ('Minimum Distance Comparison', 'Min Distance (m)', '#2ECC71' if self.enable_dca else '#E74C3C'),
-                'Avg_Velocity(m/s)': ('Average Velocity Comparison', 'Avg Velocity (m/s)', '#2ECC71' if self.enable_dca else '#E74C3C')
+                'Avg_Velocity(m/s)': ('Average Velocity Comparison', 'Avg Velocity (m/s)', '#2ECC71' if self.enable_dca else '#E74C3C'),
+                'Comp_Time(ms)': ('Computation Time per Step', 'Time (ms)', '#F39C12' if self.enable_dca else '#8E44AD'),
+                'Collisions': ('Cumulative Collisions', 'Total Collisions', '#E74C3C')
             }
             for col, (title, ylabel, color) in metrics.items():
                 if col in df.columns:
                     plt.figure(figsize=(9, 5.5))
-                    plt.plot(df['Time(s)'], df[col], linewidth=2.5 if self.enable_dca else 1.5, 
-                             color=color, linestyle='-' if self.enable_dca else '--', 
-                             label=algo_label, alpha=0.9)
+                    
+                    # 🌟 新增：对碰撞次数特殊处理，使用累加阶梯图
+                    if col == 'Collisions':
+                        plt.plot(df['Time(s)'], df[col].cumsum(), linewidth=2.5, color=color, label=algo_label)
+                    else:
+                        plt.plot(df['Time(s)'], df[col], linewidth=2.5 if self.enable_dca else 1.5, 
+                                 color=color, linestyle='-' if self.enable_dca else '--', 
+                                 label=algo_label, alpha=0.9)
                     
                     if col == 'Target_Error(m)':
                         plt.axhline(y=0.0, color='black', linestyle=':', label='Ideal')
@@ -363,10 +381,19 @@ class APFSwarmController():
                         # 这里动态使用了 self.min_dist，实现了图表随用户输入变化
                         plt.axhline(y=self.min_dist, color='black', linestyle='-.', label=f'Safety Limit ({self.min_dist}m)')
                         plt.axhspan(0, self.min_dist, color='gray', alpha=0.15)
+                        # 🌟 新增：在最小距离图里画一条 0.3m 的红色物理碰撞线
+                        plt.axhline(y=0.3, color='red', linestyle='--', alpha=0.6, label='Physical Collision (0.3m)')
                         plt.ylim(bottom=max(0, self.min_dist - 0.05), top=df[col].max() * 1.05)
                     elif col == 'Avg_Velocity(m/s)':
                         plt.axhline(y=self.max_vel, color='blue', linestyle=':', alpha=0.5, label='Max Velocity')
                         plt.ylim(bottom=-0.05, top=self.max_vel + 0.1)
+                    # 🌟 新增：针对新指标的刻度设置
+                    elif col == 'Comp_Time(ms)':
+                        plt.axhline(y=10.0, color='red', linestyle=':', label='100Hz Deadline (10ms)')
+                        plt.ylim(bottom=0.0, top=max(15.0, df[col].max() * 1.2))
+                    elif col == 'Collisions':
+                        plt.axhline(y=0, color='black', linestyle=':', label='Ideal (Zero)')
+                        plt.ylim(bottom=-0.5, top=max(1, df[col].cumsum().max() + 1.5))
 
                     plt.title(title, fontweight='bold', fontsize=14)
                     plt.xlabel('Time $t$ (s)', fontsize=12)

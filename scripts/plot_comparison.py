@@ -79,8 +79,13 @@ def generate_multi_comparison_plots():
     metrics = {
         'Target_Error(m)': ('Convergence Error Comparison', 'Mean Error (m)'),
         'Min_Distance(m)': ('Minimum Distance Comparison', 'Min Distance (m)'),
-        'Avg_Velocity(m/s)': ('Average Velocity Comparison', 'Avg Velocity (m/s)')
+        'Avg_Velocity(m/s)': ('Average Velocity Comparison', 'Avg Velocity (m/s)'),
+        # 🌟 新增：计算耗时与碰撞次数对比
+        'Comp_Time(ms)': ('Computation Time per Step', 'Time (ms)'),
+        'Collisions': ('Cumulative Collisions (Zero-Collision Proof)', 'Total Collisions')
     }
+
+    colors = plt.cm.tab10.colors
 
     colors = plt.cm.tab10.colors
     linestyles = ['-', '--', '-.', ':']
@@ -95,12 +100,15 @@ def generate_multi_comparison_plots():
                 color = colors[idx % len(colors)]
                 linestyle = linestyles[idx % len(linestyles)]
                 linewidth = 2.5 if idx == 0 else 1.8 
+
+                # 🌟 新增：如果是碰撞次数，强制使用累加 (cumsum) 画阶梯图！
+                y_data = df[col].cumsum() if col == 'Collisions' else df[col]
                 
-                plt.plot(df['Time(s)'], df[col], linewidth=linewidth, color=color, 
+                plt.plot(df['Time(s)'], y_data, linewidth=linewidth, color=color, 
                          linestyle=linestyle, label=labels[idx], alpha=0.9)
                 
-                if not df[col].empty:
-                    global_max = max(global_max, df[col].max())
+                if not y_data.empty:
+                    global_max = max(global_max, y_data.max())
             
             if col == 'Target_Error(m)':
                 plt.axhline(y=0.0, color='black', linestyle=':', label='Ideal (0.0m)')
@@ -127,9 +135,20 @@ def generate_multi_comparison_plots():
                         label.set_fontweight('bold')
                 # ==========================================
 
+
             elif col == 'Avg_Velocity(m/s)':
                 plt.axhline(y=1.0, color='blue', linestyle=':', alpha=0.5, label='Max Velocity Limit')
                 plt.ylim(bottom=-0.05, top=global_max * 1.15 if global_max > 1.0 else 1.1)
+                
+            # 🌟 新增：计算延迟的 100Hz 警戒线 (10ms)
+            elif col == 'Comp_Time(ms)':
+                plt.axhline(y=10.0, color='red', linestyle=':', linewidth=2, label='100Hz Real-time Deadline (10ms)')
+                plt.ylim(bottom=0.0, top=max(15.0, global_max * 1.2))
+                
+            # 🌟 新增：碰撞次数的绝对安全底线 (0 次)
+            elif col == 'Collisions':
+                plt.axhline(y=0, color='black', linestyle=':', label='Ideal (Zero)')
+                plt.ylim(bottom=-0.5, top=max(1.0, global_max + 1.5))
 
             plt.title(title, fontweight='bold', fontsize=15)
             plt.xlabel('Time $t$ (s)', fontsize=13)
