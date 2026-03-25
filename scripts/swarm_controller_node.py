@@ -32,6 +32,10 @@ class SwarmControllerNode():
             sys.stdout.flush()
             return str(default_val)
 
+    def should_generate_fms_plot(self, phase_desc):
+        """会话级总开关：启动时决定是否全程生成 FMS/SRM 图。"""
+        return self.enable_fms_srm_plots
+
     def __init__(self, goals=[]) -> None:
         # ⚛️ 替换为 ARES 的专属启动界面
         print("\n" + "═"*65)
@@ -63,6 +67,8 @@ class SwarmControllerNode():
         print("--- ⚙️ Algorithm Module Configuration ---")
         module_input = self.get_input(">>> [DCA] Enable Dynamic Configuration Assignment? [y/N]: ", "n")
         self.enable_dca = True if module_input.lower() == 'y' else False
+        fms_plot_input = self.get_input(">>> [FMS/SRM] Enable plot generation for the whole run? [y/N]: ", "n")
+        self.enable_fms_srm_plots = (fms_plot_input.strip().lower() == 'y')
         
         # 🎯 动态安全基线设定 (升级为 0.35m 默认，0.3-1.0m 范围)
         self.safety_baseline = 0.35
@@ -82,9 +88,10 @@ class SwarmControllerNode():
         
         # 🌟 分离 DCA 图表和 FMS 轨迹图的文件夹
         self.save_dir = os.path.join(base_dir, 'DCA-result', timestamp)
-        self.fms_dir = os.path.join(base_dir, 'FMS-result', timestamp)
+        self.fms_dir = os.path.join(base_dir, 'FMS-result', timestamp) if self.enable_fms_srm_plots else ""
         os.makedirs(self.save_dir, exist_ok=True)
-        os.makedirs(self.fms_dir, exist_ok=True)
+        if self.enable_fms_srm_plots:
+            os.makedirs(self.fms_dir, exist_ok=True)
         
         self.phase_idx = 1 # 🌟 新增：多轮次变换的阶段计数器
         
@@ -131,7 +138,8 @@ class SwarmControllerNode():
             self.controller.global_home_poses = self.home_poses.copy() # 🌟 新增：把全局基地给控制器备份一份用来画图
             print(f"[*] [FMS] Captured home grid for {self.fleet_capacity} drones. Fleet ready for dispatch.")
             # 🌟 新增：触发绘制 "第 0 张：待命网格灰点图"
-            self.controller.generate_idle_report(self.home_poses)
+            if self.should_generate_fms_plot("FMS Standby (Phase 0)"):
+                self.controller.generate_idle_report(self.home_poses)
             sys.stdout.flush()
             
         if getattr(self, 'trigger_return', False):
@@ -227,7 +235,8 @@ class SwarmControllerNode():
         self.get_input("\n>>> [SRM] Press 'Enter' when all drones have landed safely to power off...", "")
         self.is_running = False
         # 🌟 新增：生成全员落地灰点图
-        self.controller.generate_fms_srm_report("Global_Return", self.phase_idx)
+        if self.should_generate_fms_plot("SRM Global Return"):
+            self.controller.generate_fms_srm_report("Global_Return", self.phase_idx)
         print("🛑 [ARES] System powered off successfully.")
         sys.stdout.flush()
         rospy.signal_shutdown("Experiment finished")
@@ -280,7 +289,8 @@ class SwarmControllerNode():
             
             self.controller.generate_plots()
             # 🌟 新增：生成 FMS 轨迹图
-            self.controller.generate_fms_srm_report(shape_name, self.phase_idx)
+            if self.should_generate_fms_plot(f"Phase {self.phase_idx}: {shape_name}"):
+                self.controller.generate_fms_srm_report(shape_name, self.phase_idx)
             self.phase_idx += 1
             
             cont = self.get_input("\n>>> [ARES] Do you want to try another shape? (y/n): ", "n")
