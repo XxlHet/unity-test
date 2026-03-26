@@ -4,14 +4,15 @@ import numpy as np
 from scipy.spatial.distance import cdist, pdist
 from sklearn.neighbors import BallTree
 from scipy.optimize import linear_sum_assignment  
-import os
-import csv
 import time
-import pandas as pd
 
-import matplotlib
-matplotlib.use('Agg') 
-import matplotlib.pyplot as plt
+try:
+    from apf_data_collector import collect_step_data
+    from apf_plotter import generate_fms_srm_report, generate_idle_report, generate_plots
+except ImportError:
+    # Allow module import when executed from workspace root/package context.
+    from scripts.apf_data_collector import collect_step_data
+    from scripts.apf_plotter import generate_fms_srm_report, generate_idle_report, generate_plots
 
 class APFSwarmController():
     def __init__(self, p_cohesion=1.0, p_seperation=1.0, p_alignment=1.0, max_vel=0.5, min_dist=0.35) -> None:
@@ -276,220 +277,16 @@ class APFSwarmController():
                 control_vels[k] = (control_vels[k] / speed) * self.max_vel
         self.velocities[:n] = control_vels.copy()
 
-        # 🌟 新增：精确捕捉每一帧的动态流
-        self.frame_counter += 1
-        if self.frame_counter % 10 == 0 and hasattr(self, 'fms_dir') and self.fms_dir:
-            current_t = time.time() - self.phase_start_time
-            
-            # 极简防撞计算
-            active_poses = poses[:self.current_active_num]
-            if self.current_active_num > 1:
-                dists = np.linalg.norm(active_poses[:, np.newaxis, :] - active_poses[np.newaxis, :, :], axis=-1)
-                np.fill_diagonal(dists, np.inf)
-                phase_min_dist = np.min(dists)
-            else:
-                phase_min_dist = self.min_dist
-
-            for i in range(len(poses)):
-                state = 0 # 0=躺平(IDLE)
-                if self.is_returning:
-                    if getattr(self, 'moving_mask', np.ones(n, dtype=bool))[i]: state = 2 # 返航
-                elif i < self.current_active_num:
-                    state = self.drone_states[i] # 获取这架飞机本次的任务：1=构图，2=被踢出返航
-
-                if state != 0 or poses[i][2] > 0.1: 
-                    self.trajectory_log.append([current_t, i, poses[i][0], poses[i][1], poses[i][2], state, phase_min_dist])
-
-        if self.log_dir and self.current_log_name and self.current_shape_num > 0:
-            full_path = os.path.join(self.log_dir, f"{self.current_log_name}.csv")
-            if self.last_csv_path != full_path:
-                self.csv_initialized = False
-                self.last_csv_path = full_path
-
-            if not self.csv_initialized:
-                try:
-                    with open(full_path, mode='w', newline='') as file:
-                        writer = csv.writer(file)
-                        # 🌟 新增：在表头加入计算耗时与碰撞次数
-                        writer.writerow(["Time(s)", "Min_Distance(m)", "Avg_Velocity(m/s)", "Target_Error(m)", "Comp_Time(ms)", "Collisions"])
-                    self.start_time = time.time()
-                    self.csv_initialized = True
-                except Exception:
-                    return control_vels
-
-            curr_t = round(time.time() - self.start_time, 2)
-            eval_poses = poses[:self.current_shape_num]
-            eval_goals = self.goals[:self.current_shape_num]
-            eval_vels = control_vels[:self.current_shape_num]
-            
-            if self.current_shape_num > 1:
-                diffs = eval_poses[:, np.newaxis, :] - eval_poses[np.newaxis, :, :]
-                dists = np.linalg.norm(diffs, axis=-1)
-                np.fill_diagonal(dists, np.inf)
-                min_d = round(np.min(dists), 4)
-            else:
-                min_d = 0.0
-                
-            avg_v = round(np.mean(np.linalg.norm(eval_vels, axis=1)), 4)
-            err = round(np.mean(np.linalg.norm(eval_goals - eval_poses, axis=1)), 4)
-
-            # 🌟 新增：计算本帧耗时 (毫秒)
-            step_comp_time_ms = (time.time() - step_start_time) * 1000.0
-            # 🌟 新增：判断本帧是否发生物理碰撞 (设定物理半径 0.3m)
-            current_collisions = 1 if (0 < min_d < 0.3) else 0
-
-            try:
-                with open(full_path, mode='a', newline='') as file:
-                    writer = csv.writer(file)
-                    # 🌟 新增：将两个新指标追加写入
-                    writer.writerow([curr_t, min_d, avg_v, err, round(step_comp_time_ms, 2), current_collisions])
-            except:
-                pass 
+        collect_step_data(self, poses, control_vels, n, step_start_time)
         return control_vels
 
     def generate_plots(self):
-        if not self.last_csv_path or not os.path.exists(self.last_csv_path): return
-        mode_prefix = "DCA" if self.enable_dca else "Base"
-        algo_label = "DCA (Ours)" if self.enable_dca else "Baseline"
-
-        print(f"\n[*] Generating plots for [{algo_label}] mode...")
-        try:
-            df = pd.read_csv(self.last_csv_path)
-            # 🌟 新增：扩充指标字典，加入计算耗时与碰撞次数
-            metrics = {
-                'Target_Error(m)': ('Convergence Error Comparison', 'Mean Error (m)', '#2ECC71' if self.enable_dca else '#E74C3C'),
-                'Min_Distance(m)': ('Minimum Distance Comparison', 'Min Distance (m)', '#2ECC71' if self.enable_dca else '#E74C3C'),
-                'Avg_Velocity(m/s)': ('Average Velocity Comparison', 'Avg Velocity (m/s)', '#2ECC71' if self.enable_dca else '#E74C3C'),
-                'Comp_Time(ms)': ('Computation Time per Step', 'Time (ms)', '#F39C12' if self.enable_dca else '#8E44AD'),
-                'Collisions': ('Cumulative Collisions', 'Total Collisions', '#E74C3C')
-            }
-            for col, (title, ylabel, color) in metrics.items():
-                if col in df.columns:
-                    plt.figure(figsize=(9, 5.5))
-                    
-                    # 🌟 新增：对碰撞次数特殊处理，使用累加阶梯图
-                    if col == 'Collisions':
-                        plt.plot(df['Time(s)'], df[col].cumsum(), linewidth=2.5, color=color, label=algo_label)
-                    else:
-                        plt.plot(df['Time(s)'], df[col], linewidth=2.5 if self.enable_dca else 1.5, 
-                                 color=color, linestyle='-' if self.enable_dca else '--', 
-                                 label=algo_label, alpha=0.9)
-                    
-                    if col == 'Target_Error(m)':
-                        plt.axhline(y=0.0, color='black', linestyle=':', label='Ideal')
-                    elif col == 'Min_Distance(m)':
-                        # 这里动态使用了 self.min_dist，实现了图表随用户输入变化
-                        plt.axhline(y=self.min_dist, color='black', linestyle='-.', label=f'Safety Limit ({self.min_dist}m)')
-                        plt.axhspan(0, self.min_dist, color='gray', alpha=0.15)
-                        # 🌟 新增：在最小距离图里画一条 0.3m 的红色物理碰撞线
-                        plt.axhline(y=0.3, color='red', linestyle='--', alpha=0.6, label='Physical Collision (0.3m)')
-                        plt.ylim(bottom=max(0, self.min_dist - 0.05), top=df[col].max() * 1.05)
-                    elif col == 'Avg_Velocity(m/s)':
-                        plt.axhline(y=self.max_vel, color='blue', linestyle=':', alpha=0.5, label='Max Velocity')
-                        plt.ylim(bottom=-0.05, top=self.max_vel + 0.1)
-                    # 🌟 新增：针对新指标的刻度设置
-                    elif col == 'Comp_Time(ms)':
-                        plt.axhline(y=10.0, color='red', linestyle=':', label='100Hz Deadline (10ms)')
-                        plt.ylim(bottom=0.0, top=max(15.0, df[col].max() * 1.2))
-                    elif col == 'Collisions':
-                        plt.axhline(y=0, color='black', linestyle=':', label='Ideal (Zero)')
-                        plt.ylim(bottom=-0.5, top=max(1, df[col].cumsum().max() + 1.5))
-
-                    plt.title(title, fontweight='bold', fontsize=14)
-                    plt.xlabel('Time $t$ (s)', fontsize=12)
-                    plt.ylabel(ylabel, fontsize=12)
-                    plt.grid(True, linestyle='--', alpha=0.5)
-                    plt.legend(loc='best', fontsize=11, frameon=True, shadow=True)
-                    
-                    img_name = f"{mode_prefix}_{self.current_log_name}_{col.split('(')[0]}.png"
-                    plt.tight_layout()
-                    plt.savefig(os.path.join(self.log_dir, img_name), dpi=300)
-                    plt.close()
-            print(f"[*] Plots saved: {self.log_dir}")
-        except Exception as e:
-            print(f"⚠️ Plotting Error: {e}")
+        generate_plots(self)
 
     def generate_idle_report(self, home_poses):
         """🌟 第一张图：初始纯灰点待命图"""
-        if not hasattr(self, 'fms_dir') or not self.fms_dir: return
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(111, projection='3d')
-        ax.set_title("Phase 0: FMS Fleet Standby", fontweight='bold')
-        # 画出全局停机坪的灰色锚点
-        ax.scatter(home_poses[:,0], home_poses[:,1], home_poses[:,2], color='gray', marker='o', s=30, label='Idle Fleet')
-        ax.set_xlabel('X (m)'); ax.set_ylabel('Y (m)'); ax.set_zlabel('Z (m)')
-        ax.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.fms_dir, "00_FMS_Standby.png"), dpi=300)
-        plt.close()
+        generate_idle_report(self, home_poses)
 
     def generate_fms_srm_report(self, phase_name, phase_idx):
         """🌟 阶段图：支持星标与灰点切换，轨迹流线"""
-        if not self.trajectory_log or not hasattr(self, 'fms_dir') or not self.fms_dir: return
-        print(f"\n[*] 📊 [FMS] Generating Trajectory Map for Phase {phase_idx}...")
-        df = pd.DataFrame(self.trajectory_log, columns=['Time', 'DroneID', 'X', 'Y', 'Z', 'State', 'MinDist'])
-        
-        fig = plt.figure(figsize=(16, 6))
-        ax1 = fig.add_subplot(121, projection='3d')
-        ax1.set_title(f"Phase {phase_idx}: [{phase_name}] Trajectory & FMS Status", fontweight='bold')
-        
-        # 为了提供对比参照，先铺一层底层基地的灰色圆点
-        if hasattr(self, 'global_home_poses') and self.global_home_poses is not None:
-            ax1.scatter(self.global_home_poses[:,0], self.global_home_poses[:,1], self.global_home_poses[:,2], 
-                        color='lightgray', marker='o', s=20, alpha=0.5, label='Base Grid')
-        
-        plotted = set()
-        for drone_id in df['DroneID'].unique():
-            drone_data = df[df['DroneID'] == drone_id]
-            states = drone_data['State'].unique()
-            
-            # == 状态 1：被 FMS 征召去构成形状 ==
-            if 1 in states: 
-                line = drone_data[drone_data['State'] == 1]
-                lbl1 = "FMS Dispatch" if "Disp" not in plotted else ""
-                # 🔧 优化：极细、高透明的轨迹线，塑造“能量流”的感觉，不遮挡主体
-                ax1.plot(line['X'], line['Y'], line['Z'], color='#3498DB', alpha=0.2, linewidth=0.8, label=lbl1)
-                
-                # 🔧 优化：缩小星型标记，加入深绿色描边(edgecolor)，让紧密挨在一起的星星层次分明
-                end_pt = line.iloc[-1]
-                lbl_star = "Shape Node" if "Star" not in plotted else ""
-                ax1.scatter(end_pt['X'], end_pt['Y'], end_pt['Z'], color='#2ECC71', edgecolor='#196F3D', linewidth=0.5, marker='*', s=80, zorder=5, label=lbl_star)
-                plotted.update(["Disp", "Star"])
-            
-            # == 状态 2：被 FMS 踢出或触发 SRM 返航 ==
-            if 2 in states: 
-                line = drone_data[drone_data['State'] == 2]
-                lbl2 = "SRM Return" if "Ret" not in plotted else ""
-                # 🔧 优化：细虚线，降低返航轨迹的视觉抢占率
-                ax1.plot(line['X'], line['Y'], line['Z'], color='#E74C3C', alpha=0.25, linestyle=':', linewidth=1.0, label=lbl2)
-                
-                # 🔧 优化：缩小地面灰点并加深色描边
-                end_pt = line.iloc[-1]
-                lbl_dot = "Landed/Idle" if "Dot" not in plotted else ""
-                ax1.scatter(end_pt['X'], end_pt['Y'], end_pt['Z'], color='lightgray', edgecolor='gray', linewidth=0.8, marker='o', s=35, zorder=5, label=lbl_dot)
-                plotted.update(["Ret", "Dot"])
-
-        # 🔧 优化：调整 3D 摄像机默认视角，微抬高一点，侧一点，能更好地看清立方体/球体的体积感
-        ax1.view_init(elev=25, azim=40)
-        
-        ax1.set_xlabel('X (m)'); ax1.set_ylabel('Y (m)'); ax1.set_zlabel('Z (m)')
-        ax1.legend()
-
-        # === 子图 2：全程防撞铁证 ===
-        ax2 = fig.add_subplot(122)
-        ax2.set_title(f"Phase {phase_idx}: Zero-Collision Proof", fontweight='bold')
-        time_dist = df.groupby('Time')['MinDist'].min().reset_index()
-        ax2.plot(time_dist['Time'], time_dist['MinDist'], color='#2ECC71', linewidth=2, label='Min Inter-Drone Dist')
-        
-        col_rad = 0.2
-        ax2.axhline(y=col_rad, color='red', linestyle='--', linewidth=2, label=f'Collision ({col_rad}m)')
-        ax2.fill_between(time_dist['Time'], 0, col_rad, color='red', alpha=0.15)
-        ax2.axhline(y=self.min_dist, color='gray', linestyle='-.', label=f'Baseline ({self.min_dist}m)')
-        ax2.set_ylim(bottom=0.0)
-        ax2.set_xlabel('Phase Time (s)'); ax2.set_ylabel('Distance (m)')
-        ax2.legend()
-        ax2.grid(True, linestyle='--', alpha=0.5)
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.fms_dir, f"{phase_idx:02d}_{phase_name}.png"), dpi=300)
-        plt.close()
+        generate_fms_srm_report(self, phase_name, phase_idx)
