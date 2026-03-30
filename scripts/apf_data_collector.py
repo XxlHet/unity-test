@@ -14,7 +14,15 @@ def collect_step_data(controller, poses, control_vels, n, step_start_time):
 
 def _collect_trajectory_sample(controller, poses, n):
     controller.frame_counter += 1
-    if controller.frame_counter % 10 != 0:
+    active_n = int(getattr(controller, "current_active_num", 0))
+    if active_n <= 40:
+        sample_stride = 10
+    elif active_n <= 80:
+        sample_stride = 20
+    else:
+        sample_stride = 30
+
+    if controller.frame_counter % sample_stride != 0:
         return
     if not getattr(controller, "fms_dir", ""):
         return

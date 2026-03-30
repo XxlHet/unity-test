@@ -6,6 +6,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 
 
 def generate_plots(controller):
@@ -118,8 +119,29 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     print(f"\n[*] 📊 [FMS] Generating Trajectory Map for Phase {phase_idx}...")
     df = pd.DataFrame(controller.trajectory_log, columns=["Time", "DroneID", "X", "Y", "Z", "State", "MinDist"])
 
-    fig = plt.figure(figsize=(16, 6))
-    ax1 = fig.add_subplot(121, projection="3d")
+    drone_ids = sorted(df["DroneID"].unique().tolist())
+    drone_count = len(drone_ids)
+    if drone_count <= 40:
+        max_traj_to_draw = drone_count
+        traj_alpha = 0.22
+        traj_lw = 0.9
+    elif drone_count <= 80:
+        max_traj_to_draw = 36
+        traj_alpha = 0.14
+        traj_lw = 0.65
+    else:
+        max_traj_to_draw = 28
+        traj_alpha = 0.10
+        traj_lw = 0.50
+
+    if drone_count > max_traj_to_draw:
+        sampled_pos = np.linspace(0, drone_count - 1, max_traj_to_draw, dtype=int)
+        sampled_ids = {drone_ids[p] for p in sampled_pos}
+    else:
+        sampled_ids = set(drone_ids)
+
+    fig = plt.figure(figsize=(20, 6))
+    ax1 = fig.add_subplot(131, projection="3d")
     ax1.set_title(f"Phase {phase_idx}: [{phase_name}] Trajectory & FMS Status", fontweight="bold")
 
     if hasattr(controller, "global_home_poses") and controller.global_home_poses is not None:
@@ -135,14 +157,18 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
         )
 
     plotted = set()
+    last_points = []
     for drone_id in df["DroneID"].unique():
         drone_data = df[df["DroneID"] == drone_id]
         states = drone_data["State"].unique()
+        if len(drone_data) > 0:
+            last_points.append(drone_data.iloc[-1])
 
         if 1 in states:
             line = drone_data[drone_data["State"] == 1]
             lbl1 = "FMS Dispatch" if "Disp" not in plotted else ""
-            ax1.plot(line["X"], line["Y"], line["Z"], color="#3498DB", alpha=0.2, linewidth=0.8, label=lbl1)
+            if drone_id in sampled_ids:
+                ax1.plot(line["X"], line["Y"], line["Z"], color="#3498DB", alpha=traj_alpha, linewidth=traj_lw, label=lbl1)
 
             end_pt = line.iloc[-1]
             lbl_star = "Shape Node" if "Star" not in plotted else ""
@@ -154,7 +180,7 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
                 edgecolor="#196F3D",
                 linewidth=0.5,
                 marker="*",
-                s=80,
+                s=70 if drone_count > 80 else 80,
                 zorder=5,
                 label=lbl_star,
             )
@@ -163,16 +189,17 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
         if 2 in states:
             line = drone_data[drone_data["State"] == 2]
             lbl2 = "SRM Return" if "Ret" not in plotted else ""
-            ax1.plot(
-                line["X"],
-                line["Y"],
-                line["Z"],
-                color="#E74C3C",
-                alpha=0.25,
-                linestyle=":",
-                linewidth=1.0,
-                label=lbl2,
-            )
+            if drone_id in sampled_ids:
+                ax1.plot(
+                    line["X"],
+                    line["Y"],
+                    line["Z"],
+                    color="#E74C3C",
+                    alpha=min(0.28, traj_alpha + 0.03),
+                    linestyle=":",
+                    linewidth=traj_lw + 0.1,
+                    label=lbl2,
+                )
 
             end_pt = line.iloc[-1]
             lbl_dot = "Landed/Idle" if "Dot" not in plotted else ""
@@ -184,7 +211,7 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
                 edgecolor="gray",
                 linewidth=0.8,
                 marker="o",
-                s=35,
+                s=28 if drone_count > 80 else 35,
                 zorder=5,
                 label=lbl_dot,
             )
@@ -197,20 +224,56 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     ax1.set_zlabel("Z (m)")
     ax1.legend()
 
-    ax2 = fig.add_subplot(122)
-    ax2.set_title(f"Phase {phase_idx}: Zero-Collision Proof", fontweight="bold")
+    ax2 = fig.add_subplot(132)
+    ax2.set_title(f"Phase {phase_idx}: Top-Down Occupancy", fontweight="bold")
+    if hasattr(controller, "global_home_poses") and controller.global_home_poses is not None:
+        ax2.scatter(
+            controller.global_home_poses[:, 0],
+            controller.global_home_poses[:, 1],
+            color="lightgray",
+            marker="o",
+            s=10,
+            alpha=0.35,
+            label="Base Grid",
+        )
+
+    if last_points:
+        last_df = pd.DataFrame(last_points)
+        shape_pts = last_df[last_df["State"] == 1]
+        land_pts = last_df[last_df["State"] == 2]
+
+        if not shape_pts.empty:
+            ax2.scatter(shape_pts["X"], shape_pts["Y"], s=22, marker="*", color="#2ECC71", alpha=0.95, label="Shape End")
+        if not land_pts.empty:
+            ax2.scatter(land_pts["X"], land_pts["Y"], s=18, marker="o", color="#95A5A6", alpha=0.9, label="Return/Idle End")
+
+    ax2.set_xlabel("X (m)")
+    ax2.set_ylabel("Y (m)")
+    ax2.set_aspect("equal", adjustable="box")
+    ax2.grid(True, linestyle="--", alpha=0.35)
+    ax2.legend(loc="best")
+
+    ax3 = fig.add_subplot(133)
+    ax3.set_title(f"Phase {phase_idx}: Zero-Collision Proof", fontweight="bold")
     time_dist = df.groupby("Time")["MinDist"].min().reset_index()
-    ax2.plot(time_dist["Time"], time_dist["MinDist"], color="#2ECC71", linewidth=2, label="Min Inter-Drone Dist")
+    ax3.plot(time_dist["Time"], time_dist["MinDist"], color="#2ECC71", linewidth=2, label="Min Inter-Drone Dist")
 
     col_rad = 0.2
-    ax2.axhline(y=col_rad, color="red", linestyle="--", linewidth=2, label=f"Collision ({col_rad}m)")
-    ax2.fill_between(time_dist["Time"], 0, col_rad, color="red", alpha=0.15)
-    ax2.axhline(y=controller.min_dist, color="gray", linestyle="-.", label=f"Baseline ({controller.min_dist}m)")
-    ax2.set_ylim(bottom=0.0)
-    ax2.set_xlabel("Phase Time (s)")
-    ax2.set_ylabel("Distance (m)")
-    ax2.legend()
-    ax2.grid(True, linestyle="--", alpha=0.5)
+    ax3.axhline(y=col_rad, color="red", linestyle="--", linewidth=2, label=f"Collision ({col_rad}m)")
+    ax3.fill_between(time_dist["Time"], 0, col_rad, color="red", alpha=0.15)
+    ax3.axhline(y=controller.min_dist, color="gray", linestyle="-.", label=f"Baseline ({controller.min_dist}m)")
+    ax3.set_ylim(bottom=0.0)
+    ax3.set_xlabel("Phase Time (s)")
+    ax3.set_ylabel("Distance (m)")
+    ax3.legend()
+    ax3.grid(True, linestyle="--", alpha=0.5)
+
+    if drone_count > max_traj_to_draw:
+        fig.suptitle(
+            f"High-Density Mode: showing {max_traj_to_draw}/{drone_count} trajectories + all endpoints",
+            fontsize=10,
+            y=1.02,
+        )
 
     plt.tight_layout()
     plt.savefig(os.path.join(controller.fms_dir, f"{phase_idx:02d}_{phase_name}.png"), dpi=300)

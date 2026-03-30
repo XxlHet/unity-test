@@ -78,29 +78,7 @@ class APFSwarmController():
         
         if m > 0:
             self.moving_mask[:m] = True
-            moving_idx = np.arange(m)
-            grounded_idx = np.arange(m, n)
-
-            # 地面待机机体不动：先估计其当前占用的 home 槽位
-            occupied_slots = set()
-            if len(grounded_idx) > 0:
-                dist_ground_to_home = cdist(self.return_start_poses[grounded_idx], self.return_home_poses)
-                _, grounded_home_cols = linear_sum_assignment(dist_ground_to_home)
-                occupied_slots = set(grounded_home_cols.tolist())
-
-            available_slots = [i for i in range(n) if i not in occupied_slots]
-            if len(available_slots) < m:
-                # 极端情况下兜底：保持前缀槽位策略，避免无目标可分配
-                available_slots = list(range(m))
-
-            # 表演机体只分配到空槽位，避免触发地面待机机体重新调整
-            dist_return_to_empty = cdist(self.return_start_poses[moving_idx], self.return_home_poses[available_slots])
-            row_ind, col_ind = linear_sum_assignment(dist_return_to_empty)
-            matched_homes = np.zeros_like(self.return_home_poses[moving_idx])
-            for r, c in zip(row_ind, col_ind):
-                matched_homes[r] = self.return_home_poses[available_slots[c]].copy()
-            self.return_home_poses[moving_idx] = matched_homes
-            
+            # 顺序编号 SRM：按索引返回对应 home
             max_dist = np.max(np.linalg.norm(self.return_home_poses[:m] - self.return_start_poses[:m], axis=1))
         else:
             max_dist = 0
@@ -110,7 +88,7 @@ class APFSwarmController():
         self.return_start_time = time.time()
         self.goals = self.return_start_poses.copy() 
         
-        print(f"\n[SRM] Safe Return Activated. {m} performance drones returning to empty slots. Est. time: {self.return_duration:.1f}s")
+        print(f"\n[SRM] Safe Return Activated. {m} active drones returning by index. Est. time: {self.return_duration:.1f}s")
 
     # =================================================================
     # 🧠 [DCA + FMS 混合模块]: 重构的目标分配器
@@ -118,6 +96,9 @@ class APFSwarmController():
     def distribute_goals(self, start, goals, shape_num=None, active_num=None):
         if shape_num is None: shape_num = len(goals)
         if active_num is None: active_num = len(goals)
+
+        active_num = min(active_num, len(start), len(goals))
+        shape_num = min(shape_num, active_num)
         
         self.current_shape_num = shape_num
         self.current_active_num = active_num
@@ -125,10 +106,12 @@ class APFSwarmController():
         out_goals = np.copy(goals)
 
         if active_num > 0:
-            active_start = start[:active_num]
-            active_goals = goals[:active_num]
-            shape_goals = active_goals[:shape_num]
-            rtb_goals = active_goals[shape_num:]
+            shape_start = start[:shape_num]
+            shape_goals = goals[:shape_num]
+            # 顺序增减编约束：返航组保持按索引回 home，不参与跨组重排
+            rtb_start = start[shape_num:active_num]
+            rtb_goals = goals[shape_num:active_num]
+            self.drone_states.fill(0)
 
             if self.enable_dca and shape_num > 1:
                 shape_goals = shape_goals + np.random.normal(0, 1e-3, shape_goals.shape) 
@@ -175,29 +158,32 @@ class APFSwarmController():
                     displacement = np.clip(displacement, -0.08, 0.08)
                     scaled_shape_goals += displacement
 
-                if len(rtb_goals) > 0:
-                    scaled_active_goals = np.vstack((scaled_shape_goals, rtb_goals))
-                else:
-                    scaled_active_goals = scaled_shape_goals
-
-                cost_matrix = cdist(active_start, scaled_active_goals) ** 2.0 
+                # 仅在表演组内部执行 DCA 匹配，避免“随机上/下场”
+                cost_matrix = cdist(shape_start, scaled_shape_goals) ** 2.0 
                 row_ind, col_ind = linear_sum_assignment(cost_matrix)
-                
-                self.drone_states.fill(0)
+
                 for r, c in zip(row_ind, col_ind):
-                    out_goals[r] = scaled_active_goals[c]
-                    self.drone_states[r] = 1 if c < shape_num else 2 # 🌟 1=飞往形状, 2=返航基地
+                    out_goals[r] = scaled_shape_goals[c]
+                    self.drone_states[r] = 1 # 🌟 飞往形状
+
+                for i in range(shape_num, active_num):
+                    out_goals[i] = goals[i]
+                    self.drone_states[i] = 2 # 🌟 顺序返航/待命组
                 print(f"\n[DCA] Dynamic Configuration Assignment (Scale: {scale:.2f}). Shape drones: {shape_num}")
                 
             else:
-                dist_matrix = cdist(active_start, active_goals)
-                self.drone_states.fill(0)
-                for i in range(active_num):
+                # Baseline 也限定在表演组内匹配
+                dist_matrix = cdist(shape_start, shape_goals)
+                for i in range(shape_num):
                     ind = np.argmin(dist_matrix[i])
-                    out_goals[i] = active_goals[ind]
-                    self.drone_states[i] = 1 if ind < shape_num else 2 # 🌟 1=飞往形状, 2=返航基地
+                    out_goals[i] = shape_goals[ind]
+                    self.drone_states[i] = 1
                     dist_matrix[i, :] = np.inf
                     dist_matrix[:, ind] = np.inf
+
+                for i in range(shape_num, active_num):
+                    out_goals[i] = goals[i]
+                    self.drone_states[i] = 2
                 print(f"\n[Baseline] Greedy topology. Shape drones: {shape_num}")
 
         self.goals = out_goals

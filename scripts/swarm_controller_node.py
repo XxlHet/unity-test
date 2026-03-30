@@ -152,15 +152,15 @@ class SwarmControllerNode():
             
         if self.start_poses is None:
             if self.home_poses is None: return # 等待环境加载
-            
-            # 🌟 核心修复：更新历史最高出动水位！只要起飞过，就永远纳入 APF 管控，防止孤儿！
-            self.prev_active_drones = max(self.prev_active_drones, self.shape_drones)
+
+            # 顺序增减编：仅覆盖“上一轮完成数量”和“本轮目标数量”的并集
+            runtime_active = min(max(self.prev_active_drones, self.shape_drones), self.fleet_capacity)
             
             self.controller.distribute_goals(
                 poses, 
                 self.goals, 
                 shape_num=self.shape_drones, 
-                active_num=self.prev_active_drones # 始终调度水位线以下的全部无人机
+                active_num=runtime_active
             ) 
             self.start_poses = poses
             
@@ -286,6 +286,8 @@ class SwarmControllerNode():
 
             self.get_input("\n>>> [ARES] Press 'Enter' when formation is complete to generate individual plots...", "")
             self.is_running = False 
+            # 用户确认当前阶段完成后，更新上一轮完成数量
+            self.prev_active_drones = self.shape_drones
             
             self.controller.generate_plots()
             # 🌟 新增：生成 FMS 轨迹图
