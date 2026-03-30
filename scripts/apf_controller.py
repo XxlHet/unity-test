@@ -47,6 +47,7 @@ class APFSwarmController():
         self.return_home_poses = None
         self.return_start_time = 0
         self.return_duration = 5.0
+        self.return_home_tol = 0.08
         
         # =================================================================
         # 🚀 [FMS 模块引入]: 动态活跃数量追踪
@@ -77,13 +78,28 @@ class APFSwarmController():
         
         if m > 0:
             self.moving_mask[:m] = True
-            
-            dist_matrix = cdist(self.return_start_poses[:m], self.return_home_poses[:m])
-            row_ind, col_ind = linear_sum_assignment(dist_matrix)
-            matched_homes = np.zeros_like(self.return_home_poses[:m])
+            moving_idx = np.arange(m)
+            grounded_idx = np.arange(m, n)
+
+            # 地面待机机体不动：先估计其当前占用的 home 槽位
+            occupied_slots = set()
+            if len(grounded_idx) > 0:
+                dist_ground_to_home = cdist(self.return_start_poses[grounded_idx], self.return_home_poses)
+                _, grounded_home_cols = linear_sum_assignment(dist_ground_to_home)
+                occupied_slots = set(grounded_home_cols.tolist())
+
+            available_slots = [i for i in range(n) if i not in occupied_slots]
+            if len(available_slots) < m:
+                # 极端情况下兜底：保持前缀槽位策略，避免无目标可分配
+                available_slots = list(range(m))
+
+            # 表演机体只分配到空槽位，避免触发地面待机机体重新调整
+            dist_return_to_empty = cdist(self.return_start_poses[moving_idx], self.return_home_poses[available_slots])
+            row_ind, col_ind = linear_sum_assignment(dist_return_to_empty)
+            matched_homes = np.zeros_like(self.return_home_poses[moving_idx])
             for r, c in zip(row_ind, col_ind):
-                matched_homes[r] = self.return_home_poses[:m][c].copy()
-            self.return_home_poses[:m] = matched_homes
+                matched_homes[r] = self.return_home_poses[available_slots[c]].copy()
+            self.return_home_poses[moving_idx] = matched_homes
             
             max_dist = np.max(np.linalg.norm(self.return_home_poses[:m] - self.return_start_poses[:m], axis=1))
         else:
@@ -94,7 +110,7 @@ class APFSwarmController():
         self.return_start_time = time.time()
         self.goals = self.return_start_poses.copy() 
         
-        print(f"\n[SRM] Safe Return Activated. {m} active drones returning. Est. time: {self.return_duration:.1f}s")
+        print(f"\n[SRM] Safe Return Activated. {m} performance drones returning to empty slots. Est. time: {self.return_duration:.1f}s")
 
     # =================================================================
     # 🧠 [DCA + FMS 混合模块]: 重构的目标分配器
@@ -270,6 +286,28 @@ class APFSwarmController():
         # 它们会因为惯性产生轻微的过冲（Overshoot）和回弹，从而拉出极具生命力的圆润波浪！
         # =================================================================
         control_vels = 0.90 * control_vels + 0.10 * self.velocities[:n]  # 🔧 微调：大幅削弱残余惯性
+
+        # 惯性融合后再次清零非活动机体，防止地面机体被历史速度“带偏”
+        if self.is_returning:
+            mask = getattr(self, 'moving_mask', np.ones(n, dtype=bool))
+            for i in range(n):
+                if not mask[i]:
+                    control_vels[i] = 0.0
+                    self.velocities[i] = 0.0
+        else:
+            for i in range(n):
+                if i >= self.current_active_num:
+                    control_vels[i] = 0.0
+                    self.velocities[i] = 0.0
+
+        # 返航末段近点锁定，消除最后几厘米残余误差
+        if self.is_returning:
+            m = min(self.current_active_num, n)
+            for i in range(m):
+                if np.linalg.norm(poses[i] - self.return_home_poses[i]) < self.return_home_tol:
+                    self.goals[i] = self.return_home_poses[i]
+                    control_vels[i] = 0.0
+                    self.velocities[i] = 0.0
         
         for k in range(len(control_vels)):
             speed = np.linalg.norm(control_vels[k])
