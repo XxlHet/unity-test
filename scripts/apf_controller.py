@@ -63,6 +63,11 @@ class APFSwarmController():
         self.trajectory_log = []
         self.frame_counter = 0
         self.drone_states = np.zeros(1000) # 记录分配目标：1=去往形状(星标), 2=去往基地(灰点)
+        self.phase_prev_active_num = 0
+        self.phase_shape_num = 0
+        self.phase_active_num = 0
+        self.phase_new_launch_ids = np.array([], dtype=int)
+        self.phase_return_ids = np.array([], dtype=int)
 
     # =================================================================
     # 🛡️ [SRM 模块引入]: 核心返航初始化函数

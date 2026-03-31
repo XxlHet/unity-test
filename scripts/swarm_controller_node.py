@@ -230,6 +230,12 @@ class SwarmControllerNode():
         self.controller.trajectory_log.clear()       # 🌟 新增：清空准备记录纯返航轨迹
         self.controller.phase_start_time = time.time() # 🌟 新增
         self.controller.current_log_name = "" 
+        prev_active = int(self.prev_active_drones)
+        self.controller.phase_prev_active_num = prev_active
+        self.controller.phase_shape_num = 0
+        self.controller.phase_active_num = prev_active
+        self.controller.phase_new_launch_ids = np.array([], dtype=int)
+        self.controller.phase_return_ids = np.arange(prev_active, dtype=int) if prev_active > 0 else np.array([], dtype=int)
         self.is_running = True
         
         self.get_input("\n>>> [SRM] Press 'Enter' when all drones have landed safely to power off...", "")
@@ -269,6 +275,16 @@ class SwarmControllerNode():
             self.process_user_input(user_input)
             self.controller.trajectory_log.clear()
             self.controller.phase_start_time = time.time()
+            prev_active = int(self.prev_active_drones)
+            curr_shape = int(self.shape_drones)
+            runtime_active = int(min(max(prev_active, curr_shape), self.fleet_capacity))
+            new_launch_ids = np.arange(prev_active, runtime_active, dtype=int) if runtime_active > prev_active else np.array([], dtype=int)
+            return_ids = np.arange(curr_shape, prev_active, dtype=int) if prev_active > curr_shape else np.array([], dtype=int)
+            self.controller.phase_prev_active_num = prev_active
+            self.controller.phase_shape_num = curr_shape
+            self.controller.phase_active_num = runtime_active
+            self.controller.phase_new_launch_ids = new_launch_ids
+            self.controller.phase_return_ids = return_ids
             self.start_poses = None
             self.start_poses = None
             self.is_running = True 

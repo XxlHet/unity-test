@@ -7,6 +7,19 @@ import glob
 import datetime
 import numpy as np
 
+
+def clean_metric_series(df, metric_col):
+    if 'Time(s)' not in df.columns or metric_col not in df.columns:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+
+    sub = df[['Time(s)', metric_col]].copy()
+    sub['Time(s)'] = pd.to_numeric(sub['Time(s)'], errors='coerce')
+    sub[metric_col] = pd.to_numeric(sub[metric_col], errors='coerce')
+    sub = sub.dropna(subset=['Time(s)', metric_col])
+    if sub.empty:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+    return sub['Time(s)'], sub[metric_col]
+
 def get_all_csv_files(limit=30):
     """全局搜索 DCA-result 文件夹，按生成时间倒序列出最近的 CSV 文件"""
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,7 +67,12 @@ def generate_multi_comparison_plots():
     print("\n[*] 正在读取数据并生成对比图表...")
     dfs = []
     for f in selected_files:
-        dfs.append(pd.read_csv(f))
+        try:
+            df = pd.read_csv(f)
+            dfs.append(df)
+        except Exception as e:
+            print(f"⚠️ 无法读取文件，已跳过: {f} ({e})")
+            dfs.append(pd.DataFrame())
 
     # 🎯 核心逻辑：从文件名中侦测 DCA 的专属安全基线
     target_baseline = 0.35 # 默认 baseline
@@ -82,10 +100,8 @@ def generate_multi_comparison_plots():
         'Avg_Velocity(m/s)': ('Average Velocity Comparison', 'Avg Velocity (m/s)'),
         # 🌟 新增：计算耗时与碰撞次数对比
         'Comp_Time(ms)': ('Computation Time per Step', 'Time (ms)'),
-        'Collisions': ('Cumulative Collisions (Zero-Collision Proof)', 'Total Collisions')
+        'Collisions': ('Cumulative Safety Violations', 'Violation Count')
     }
-
-    colors = plt.cm.tab10.colors
 
     colors = plt.cm.tab10.colors
     linestyles = ['-', '--', '-.', ':']
@@ -95,27 +111,49 @@ def generate_multi_comparison_plots():
             plt.figure(figsize=(10, 6))
             
             global_max = 0.0
+            plotted_any = False
             
             for idx, df in enumerate(dfs):
+                x_data, y_series = clean_metric_series(df, col)
+                if x_data.empty or y_series.empty:
+                    print(f"⚠️ 数据为空或非数值，已跳过: {labels[idx]} -> {col}")
+                    continue
+
                 color = colors[idx % len(colors)]
                 linestyle = linestyles[idx % len(linestyles)]
                 linewidth = 2.5 if idx == 0 else 1.8 
 
                 # 🌟 新增：如果是碰撞次数，强制使用累加 (cumsum) 画阶梯图！
-                y_data = df[col].cumsum() if col == 'Collisions' else df[col]
+                y_data = y_series.cumsum() if col == 'Collisions' else y_series
                 
-                plt.plot(df['Time(s)'], y_data, linewidth=linewidth, color=color, 
+                plt.plot(x_data, y_data, linewidth=linewidth, color=color, 
                          linestyle=linestyle, label=labels[idx], alpha=0.9)
+                plotted_any = True
                 
                 if not y_data.empty:
-                    global_max = max(global_max, y_data.max())
+                    global_max = max(global_max, float(y_data.max()))
+
+            if not plotted_any:
+                plt.text(0.5, 0.5, 'No valid data rows for selected files',
+                         ha='center', va='center', fontsize=13, transform=plt.gca().transAxes)
+                plt.title(title, fontweight='bold', fontsize=15)
+                plt.xlabel('Time $t$ (s)', fontsize=13)
+                plt.ylabel(ylabel, fontsize=13)
+                plt.grid(True, linestyle='--', alpha=0.6)
+                save_name = f"MultiCompare_{col.split('(')[0]}.png"
+                save_path = os.path.join(new_target_dir, save_name)
+                plt.tight_layout()
+                plt.savefig(save_path, dpi=300)
+                plt.close()
+                print(f"⚠️ {save_name} 仅写入空数据提示（当前选中文件无有效数值行）")
+                continue
             
             if col == 'Target_Error(m)':
                 plt.axhline(y=0.0, color='black', linestyle=':', label='Ideal (0.0m)')
             elif col == 'Min_Distance(m)':
                 plt.axhline(y=target_baseline, color='black', linestyle='-.', linewidth=1.5, label=f'Safety Limit ({target_baseline}m)')
                 plt.axhspan(0, target_baseline, color='gray', alpha=0.15)
-                plt.ylim(bottom=max(0.15, target_baseline - 0.05), top=global_max * 1.05)
+                plt.ylim(bottom=max(0.15, target_baseline - 0.05), top=max(target_baseline + 0.05, global_max * 1.05))
                 
                 # ==========================================
                 # 🌟 坐标轴刻度劫持：保留原有刻度，追加并加粗放大基线数值（不改变颜色）

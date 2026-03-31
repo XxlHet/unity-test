@@ -12,6 +12,27 @@ def collect_step_data(controller, poses, control_vels, n, step_start_time):
     _append_metrics_row(controller, poses, control_vels, step_start_time)
 
 
+def _resolve_eval_indices(controller, pose_count):
+    """Resolve active shape indices across both old and new controller fields."""
+    indices = np.asarray(getattr(controller, "shape_assignment_indices", np.array([], dtype=int)), dtype=int)
+    indices = indices[(indices >= 0) & (indices < pose_count)]
+    if indices.size > 0:
+        return indices
+
+    drone_states = np.asarray(getattr(controller, "drone_states", np.array([], dtype=int)))
+    if drone_states.size > 0:
+        idx = np.where(drone_states[:pose_count] == 1)[0]
+        if idx.size > 0:
+            return idx
+
+    fallback_n = int(getattr(controller, "current_shape_num", 0))
+    fallback_n = max(0, min(fallback_n, pose_count))
+    if fallback_n > 0:
+        return np.arange(fallback_n, dtype=int)
+
+    return np.array([], dtype=int)
+
+
 def _collect_trajectory_sample(controller, poses, n):
     controller.frame_counter += 1
     active_n = int(getattr(controller, "current_active_num", 0))
@@ -41,18 +62,26 @@ def _collect_trajectory_sample(controller, poses, n):
         phase_min_dist = controller.min_dist
 
     moving_mask = getattr(controller, "moving_mask", np.ones(n, dtype=bool))
-    shape_indices = np.asarray(getattr(controller, "shape_assignment_indices", np.array([], dtype=int)), dtype=int)
+    shape_indices = _resolve_eval_indices(controller, len(poses))
     shape_set = set(shape_indices.tolist())
+
+    drone_states = np.asarray(getattr(controller, "drone_states", np.array([], dtype=int)))
+    if drone_states.size < len(poses):
+        padded = np.zeros(len(poses), dtype=int)
+        if drone_states.size > 0:
+            padded[:drone_states.size] = drone_states.astype(int)
+        drone_states = padded
 
     for i in range(len(poses)):
         state = 0
         if controller.is_returning:
             if moving_mask[i]:
                 state = 2
-        elif i in shape_set:
-            state = 1
         elif i in active_indices:
-            state = 2
+            if int(drone_states[i]) == 1 or i in shape_set:
+                state = 1
+            else:
+                state = 2
 
         if state != 0 or poses[i][2] > 0.1:
             controller.trajectory_log.append([
@@ -86,6 +115,7 @@ def _append_metrics_row(controller, poses, control_vels, step_start_time):
                     "Target_Error(m)",
                     "Comp_Time(ms)",
                     "Collisions",
+                    "Hard_Collisions",
                 ])
             controller.start_time = time.time()
             controller.csv_initialized = True
@@ -93,8 +123,7 @@ def _append_metrics_row(controller, poses, control_vels, step_start_time):
             return
 
     curr_t = round(time.time() - controller.start_time, 2)
-    shape_indices = np.asarray(getattr(controller, "shape_assignment_indices", np.array([], dtype=int)), dtype=int)
-    shape_indices = shape_indices[(shape_indices >= 0) & (shape_indices < len(poses))]
+    shape_indices = _resolve_eval_indices(controller, len(poses))
     if shape_indices.size == 0:
         return
 
@@ -120,11 +149,16 @@ def _append_metrics_row(controller, poses, control_vels, step_start_time):
     err = round(float(np.mean(goal_err)), 4) if goal_err.size else 0.0
 
     step_comp_time_ms = (time.time() - step_start_time) * 1000.0
-    current_collisions = 1 if (0 < min_d < 0.3) else 0
+    safety_threshold = float(getattr(controller, "min_dist", 0.35))
+    hard_collision_threshold = 0.30
+
+    # Collisions records safety-baseline violations so baseline risk is visible in large swarms.
+    current_collisions = 1 if (0 < min_d < safety_threshold) else 0
+    hard_collisions = 1 if (0 < min_d < hard_collision_threshold) else 0
 
     try:
         with open(full_path, mode="a", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow([curr_t, min_d, avg_v, err, round(step_comp_time_ms, 2), current_collisions])
+            writer.writerow([curr_t, min_d, avg_v, err, round(step_comp_time_ms, 2), current_collisions, hard_collisions])
     except Exception:
         pass
