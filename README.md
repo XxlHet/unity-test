@@ -1,11 +1,11 @@
-# FlockGPT: Guiding UAV Flocking with Linguistic Orchestration
+# FlockGPT-AFS: Guiding UAV Flocking with Linguistic Orchestration
 
 ![System Architecture](img/teaser_new_short.png)
 
-Welcome to the FlockGPT repository! This project introduces FlockGPT, a pioneering approach to UAV flocking control using natural language through generative AI. FlockGPT is designed to enable intuitive orchestration of a drone flock of any size, allowing users to achieve desired geometries with ease.
+Welcome to the FlockGPT-AFS repository! This project introduces FlockGPT-AFS, a pioneering approach to UAV flocking control using natural language through generative AI. FlockGPT-AFS is designed to enable intuitive orchestration of a drone flock of any size, allowing users to achieve desired geometries with ease.
 
 ## Overview 
-FlockGPT is a novel approach to drone flocking control using natural language and generative AI. It features an LLM-based interface for user interaction and a flocking technology system that ensures smooth movement of the drone swarm. Our user study confirmed its intuitive control and high performance. This repository contains the demo code for FlockGPT.
+FlockGPT-AFS is a novel approach to drone flocking control using natural language and generative AI. It features an LLM-based interface for user interaction and a flocking technology system that ensures smooth movement of the drone swarm. Our user study confirmed its intuitive control and high performance. This repository contains the demo code for FlockGPT-AFS.
 
 ## Installing
 
@@ -47,7 +47,7 @@ and install the requirements
 pip install -r requirements.txt
 ```
 
-To make pycrazyswarm package visible in the FlockGPT package run command
+To make pycrazyswarm package visible in the FlockGPT-AFS package run command
 
 ```bash
 echo "export PYTHONPATH=$PYTHONPATH:$HOME/path/to/ros_ws/src/crazyswarm/scripts" >> ~/.bashrc
@@ -75,7 +75,7 @@ roslaunch ros_tcp_endpoint endpoint.launch
 
 Run the simulator and specify the tcp ip and the tcp port in the simulator as well.
 
-Finally, launch the FlockGPT demo by running:
+Finally, launch the FlockGPT-AFS demo by running:
 
 ```bash
 roslaunch flock_gpt sim_swarm_control.launch
@@ -83,7 +83,7 @@ roslaunch flock_gpt sim_swarm_control.launch
 
 ### RVIZ
 
-FlockGPT demo can be launched inside RVIZ by running the command:
+FlockGPT-AFS demo can be launched inside RVIZ by running the command:
 
 ```bash
 roslaunch flock_gpt swarm_control_test.launch

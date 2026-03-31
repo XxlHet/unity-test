@@ -124,14 +124,14 @@ def generate_idle_report(controller, home_poses):
 
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_title("Phase 0: FMS Fleet Standby", fontweight="bold")
+    ax.set_title("Phase 0: FLSM Fleet Standby", fontweight="bold")
     ax.scatter(home_poses[:, 0], home_poses[:, 1], home_poses[:, 2], color="gray", marker="o", s=30, label="Idle Fleet")
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.set_zlabel("Z (m)")
     ax.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(controller.fms_dir, "00_FMS_Standby.png"), dpi=300)
+    plt.savefig(os.path.join(controller.fms_dir, "00_FLSM_Standby.png"), dpi=300)
     plt.close()
 
 
@@ -207,7 +207,7 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     if not controller.trajectory_log or not getattr(controller, "fms_dir", ""):
         return
 
-    print(f"\n[*] 📊 [FMS] Generating Trajectory Map for Phase {phase_idx}...")
+    print(f"\n[*] 📊 [FLSM] Generating Trajectory Map for Phase {phase_idx}...")
     df = pd.DataFrame(controller.trajectory_log, columns=["Time", "DroneID", "X", "Y", "Z", "State", "MinDist"])
 
     drone_ids = sorted(df["DroneID"].astype(int).unique().tolist())

@@ -39,7 +39,7 @@ class APFSwarmController():
         self.last_csv_path = ""      
 
         # =================================================================
-        # 🛡️ [SRM 模块引入]: 安全返航状态机
+        # 🛡️ [FLSM 模块引入]: 安全返航状态机
         # 对比 baseline: 彻底重构了系统的生命周期，增加了统一的返航时间、初始/目标点快照。
         # =================================================================
         self.is_returning = False
@@ -50,14 +50,14 @@ class APFSwarmController():
         self.return_home_tol = 0.08
         
         # =================================================================
-        # 🚀 [FMS 模块引入]: 动态活跃数量追踪
+        # 🚀 [FLSM 模块引入]: 动态活跃数量追踪
         # 对比 baseline: 避免了全局遍历，使得天地飞机的状态得以解耦分离。
         # =================================================================
         self.current_shape_num = 0
         self.current_active_num = 0
         self.moving_mask = None 
 
-        # 🌟 新增：FMS 可视化与精确状态探针
+        # 🌟 新增：FLSM 可视化与精确状态探针
         self.fms_dir = ""
         self.phase_start_time = 0.0
         self.trajectory_log = []
@@ -70,7 +70,7 @@ class APFSwarmController():
         self.phase_return_ids = np.array([], dtype=int)
 
     # =================================================================
-    # 🛡️ [SRM 模块引入]: 核心返航初始化函数
+    # 🛡️ [FLSM 模块引入]: 核心返航初始化函数
     # =================================================================
     def initiate_safe_return(self, start_poses, home_poses):
         self.is_returning = True
@@ -83,7 +83,7 @@ class APFSwarmController():
         
         if m > 0:
             self.moving_mask[:m] = True
-            # 顺序编号 SRM：按索引返回对应 home
+            # 顺序编号 FLSM：按索引返回对应 home
             max_dist = np.max(np.linalg.norm(self.return_home_poses[:m] - self.return_start_poses[:m], axis=1))
         else:
             max_dist = 0
@@ -93,10 +93,10 @@ class APFSwarmController():
         self.return_start_time = time.time()
         self.goals = self.return_start_poses.copy() 
         
-        print(f"\n[SRM] Safe Return Activated. {m} active drones returning by index. Est. time: {self.return_duration:.1f}s")
+        print(f"\n[FLSM] Safe Return Activated. {m} active drones returning by index. Est. time: {self.return_duration:.1f}s")
 
     # =================================================================
-    # 🧠 [DCA + FMS 混合模块]: 重构的目标分配器
+    # 🧠 [DCA + FLSM 混合模块]: 重构的目标分配器
     # =================================================================
     def distribute_goals(self, start, goals, shape_num=None, active_num=None):
         if shape_num is None: shape_num = len(goals)

@@ -33,25 +33,24 @@ class SwarmControllerNode():
             return str(default_val)
 
     def should_generate_fms_plot(self, phase_desc):
-        """会话级总开关：启动时决定是否全程生成 FMS/SRM 图。"""
+        """会话级总开关：启动时决定是否全程生成 FLSM 图。"""
         return self.enable_fms_srm_plots
 
     def __init__(self, goals=[]) -> None:
-        # ⚛️ 替换为 ARES 的专属启动界面
+        # ⚛️ 系统启动界面（FlockGPT-AFS）
         print("\n" + "═"*65)
-        print("   ⚛️  ARES Swarm Control Framework Initializing...")
+        print("   ⚛️  FlockGPT-AFS Framework Initializing...")
         print("   (Autonomous Resilient & Elastic Swarm)")
         print("   -------------------------------------------------")
         # 👇 新增下面这一行，动态显示大模型名称
         print(f"   [Loaded] LLM : {CURRENT_MODEL} (Shape Generation Engine)") 
-        print("   [Loaded] FMS : Dynamic Fleet Management System")
-        print("   [Loaded] SRM : Safe Return & Ground Lock Module")
+        print("   [Loaded] FLSM: Fleet Lifecycle Safety Module")
         print("   [Standby] DCA: Dynamic Configuration Assignment")
         print("═"*65)
         sys.stdout.flush()
         
         # 🌟 核心理念：设定最大机队容量（无人机池）
-        val = self.get_input(">>> [FMS] Enter Maximum Fleet Capacity (e.g. 200, must be >= max shape size): ", "200")
+        val = self.get_input(">>> [FLSM] Enter Maximum Fleet Capacity (e.g. 200, must be >= max shape size): ", "200")
         try:
             self.fleet_capacity = int(val)
         except:
@@ -67,7 +66,7 @@ class SwarmControllerNode():
         print("--- ⚙️ Algorithm Module Configuration ---")
         module_input = self.get_input(">>> [DCA] Enable Dynamic Configuration Assignment? [y/N]: ", "n")
         self.enable_dca = True if module_input.lower() == 'y' else False
-        fms_plot_input = self.get_input(">>> [FMS/SRM] Enable plot generation for the whole run? [y/N]: ", "n")
+        fms_plot_input = self.get_input(">>> [FLSM] Enable plot generation for the whole run? [y/N]: ", "n")
         self.enable_fms_srm_plots = (fms_plot_input.strip().lower() == 'y')
         
         # 🎯 动态安全基线设定 (升级为 0.35m 默认，0.3-1.0m 范围)
@@ -86,9 +85,9 @@ class SwarmControllerNode():
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        # 🌟 分离 DCA 图表和 FMS 轨迹图的文件夹
+        # 🌟 分离 DCA 图表和 FLSM 轨迹图的文件夹
         self.save_dir = os.path.join(base_dir, 'DCA-result', timestamp)
-        self.fms_dir = os.path.join(base_dir, 'FMS-result', timestamp) if self.enable_fms_srm_plots else ""
+        self.fms_dir = os.path.join(base_dir, 'FLSM-result', timestamp) if self.enable_fms_srm_plots else ""
         os.makedirs(self.save_dir, exist_ok=True)
         if self.enable_fms_srm_plots:
             os.makedirs(self.fms_dir, exist_ok=True)
@@ -96,9 +95,9 @@ class SwarmControllerNode():
         self.phase_idx = 1 # 🌟 新增：多轮次变换的阶段计数器
         
         print("\n" + "="*60)
-        print(f"[*] [ARES] Mode: DCA Enabled = {self.enable_dca}")
-        print(f"[*] [ARES] Safety Baseline : {self.safety_baseline}m")
-        print(f"[*] [FMS] Fleet Capacity: {self.fleet_capacity} drones (Simulating...)")
+        print(f"[*] [FlockGPT-AFS] Mode: DCA Enabled = {self.enable_dca}")
+        print(f"[*] [FlockGPT-AFS] Safety Baseline : {self.safety_baseline}m")
+        print(f"[*] [FLSM] Fleet Capacity: {self.fleet_capacity} drones (Simulating...)")
         print("="*60 + "\n")
         sys.stdout.flush()
 
@@ -110,7 +109,7 @@ class SwarmControllerNode():
         
         self.controller = APFSwarmController(max_vel=0.9, min_dist=self.safety_baseline)
         self.controller.log_dir = self.save_dir
-        self.controller.fms_dir = self.fms_dir  # 🌟 挂载 FMS 专属输出目录
+        self.controller.fms_dir = self.fms_dir  # 🌟 挂载 FLSM 专属输出目录
         self.controller.enable_dca = self.enable_dca
         
         self.model = SDFModel()
@@ -125,7 +124,7 @@ class SwarmControllerNode():
 
     def cleanup_environment(self):
         """🚀 当节点被正常结束 或 Ctrl+C 强制退出时，自动触发"""
-        print("\n[*] 🧹 [FMS] Cleaning up environment... Clearing Unity screen.")
+        print("\n[*] 🧹 [FLSM] Cleaning up environment... Clearing Unity screen.")
         rospy.set_param('/swarm_num_drones', 0) # 告诉 test.py 清屏
         sys.stdout.flush()
         
@@ -136,9 +135,9 @@ class SwarmControllerNode():
         if self.home_poses is None and len(poses) >= self.fleet_capacity:
             self.home_poses = poses[:self.fleet_capacity].copy()
             self.controller.global_home_poses = self.home_poses.copy() # 🌟 新增：把全局基地给控制器备份一份用来画图
-            print(f"[*] [FMS] Captured home grid for {self.fleet_capacity} drones. Fleet ready for dispatch.")
+            print(f"[*] [FLSM] Captured home grid for {self.fleet_capacity} drones. Fleet ready for dispatch.")
             # 🌟 新增：触发绘制 "第 0 张：待命网格灰点图"
-            if self.should_generate_fms_plot("FMS Standby (Phase 0)"):
+            if self.should_generate_fms_plot("FLSM Standby (Phase 0)"):
                 self.controller.generate_idle_report(self.home_poses)
             sys.stdout.flush()
             
@@ -215,14 +214,14 @@ class SwarmControllerNode():
 
     def execute_return_sequence(self):
         if self.home_poses is None:
-            print("🛑 [ARES] Shutting down system...")
+            print("🛑 [FlockGPT-AFS] Shutting down system...")
             sys.stdout.flush()
             rospy.signal_shutdown("User exit")
             return
             
         print("\n" + "="*60)
-        print("[*] 🛬 [SRM] Activating SRM (Safe Return Module)...")
-        print("[*] [SRM] Executing global return for all airborne drones.")
+        print("[*] 🛬 [FLSM] Activating global return...")
+        print("[*] [FLSM] Executing global return for all airborne drones.")
         print("="*60)
         sys.stdout.flush()
         
@@ -238,12 +237,12 @@ class SwarmControllerNode():
         self.controller.phase_return_ids = np.arange(prev_active, dtype=int) if prev_active > 0 else np.array([], dtype=int)
         self.is_running = True
         
-        self.get_input("\n>>> [SRM] Press 'Enter' when all drones have landed safely to power off...", "")
+        self.get_input("\n>>> [FLSM] Press 'Enter' when all drones have landed safely to power off...", "")
         self.is_running = False
         # 🌟 新增：生成全员落地灰点图
-        if self.should_generate_fms_plot("SRM Global Return"):
+        if self.should_generate_fms_plot("FLSM Global Return"):
             self.controller.generate_fms_srm_report("Global_Return", self.phase_idx)
-        print("🛑 [ARES] System powered off successfully.")
+        print("🛑 [FlockGPT-AFS] System powered off successfully.")
         sys.stdout.flush()
         rospy.signal_shutdown("Experiment finished")
 
@@ -252,14 +251,14 @@ class SwarmControllerNode():
         
         while not rospy.is_shutdown():
             # 动态请求无人机数量
-            num_input = self.get_input(f"\n>>> [FMS] Enter target shape size (Max {self.fleet_capacity}): ", "10")
+            num_input = self.get_input(f"\n>>> [FLSM] Enter target shape size (Max {self.fleet_capacity}): ", "10")
             try:
                 self.shape_drones = min(int(num_input), self.fleet_capacity)
             except:
-                print("[!] [FMS] Invalid number. Setting to 10.")
+                print("[!] [FLSM] Invalid number. Setting to 10.")
                 self.shape_drones = 10
                 
-            user_input = self.get_input(f">>> [ARES] What to build with {self.shape_drones} drones? (e.g., sphere) [type 'exit' to quit]: \n", "exit")
+            user_input = self.get_input(f">>> [FlockGPT-AFS] What to build with {self.shape_drones} drones? (e.g., sphere) [type 'exit' to quit]: \n", "exit")
             if user_input.lower() in ['exit', 'quit']:
                 self.execute_return_sequence() 
                 break
@@ -291,27 +290,27 @@ class SwarmControllerNode():
             
             # 极其优雅的调度提示
             if self.shape_drones > self.prev_active_drones:
-                print(f"[*] [FMS] Scaling UP: {self.prev_active_drones} airborne + {self.shape_drones - self.prev_active_drones} launching from ground.")
+                print(f"[*] [FLSM] Scaling UP: {self.prev_active_drones} airborne + {self.shape_drones - self.prev_active_drones} launching from ground.")
             elif self.shape_drones < self.prev_active_drones:
-                print(f"[*] [FMS] Scaling DOWN: {self.shape_drones} morphing shape, {self.prev_active_drones - self.shape_drones} automatically returning to base.")
+                print(f"[*] [FLSM] Scaling DOWN: {self.shape_drones} morphing shape, {self.prev_active_drones - self.shape_drones} automatically returning to base.")
             else:
-                print(f"[*] [FMS] Seamless Morphing: All {self.shape_drones} airborne drones transitioning to new shape.")
+                print(f"[*] [FLSM] Seamless Morphing: All {self.shape_drones} airborne drones transitioning to new shape.")
                 
-            print(f"[*] [ARES] Deploying '{shape_name}' (Log: {self.controller.current_log_name}.csv)...")
+            print(f"[*] [FlockGPT-AFS] Deploying '{shape_name}' (Log: {self.controller.current_log_name}.csv)...")
             sys.stdout.flush()
 
-            self.get_input("\n>>> [ARES] Press 'Enter' when formation is complete to generate individual plots...", "")
+            self.get_input("\n>>> [FlockGPT-AFS] Press 'Enter' when formation is complete to generate individual plots...", "")
             self.is_running = False 
             # 用户确认当前阶段完成后，更新上一轮完成数量
             self.prev_active_drones = self.shape_drones
             
             self.controller.generate_plots()
-            # 🌟 新增：生成 FMS 轨迹图
+            # 🌟 新增：生成 FLSM 轨迹图
             if self.should_generate_fms_plot(f"Phase {self.phase_idx}: {shape_name}"):
                 self.controller.generate_fms_srm_report(shape_name, self.phase_idx)
             self.phase_idx += 1
             
-            cont = self.get_input("\n>>> [ARES] Do you want to try another shape? (y/n): ", "n")
+            cont = self.get_input("\n>>> [FlockGPT-AFS] Do you want to try another shape? (y/n): ", "n")
             if cont.lower() != 'y':
                 self.execute_return_sequence() 
                 break
@@ -336,7 +335,7 @@ class SwarmControllerNode():
             else:
                 self.controller.min_dist = 0.35 # Baseline 强制锁死 0.35
 
-            print(f"[*] [ARES] Mode updated: DCA Enabled={self.enable_dca}, Safety Baseline={self.controller.min_dist}m")
+            print(f"[*] [FlockGPT-AFS] Mode updated: DCA Enabled={self.enable_dca}, Safety Baseline={self.controller.min_dist}m")
             sys.stdout.flush()
 
             self.goals = []          

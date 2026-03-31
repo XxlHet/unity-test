@@ -12,7 +12,7 @@ RATE = 100
 class SwarmSimulationNode():
     def __init__(self) -> None:
         # =================================================================
-        # 🚀 [FMS 模块]: 引擎层容量初始化
+        # 🚀 [FLSM 模块]: 引擎层容量初始化
         # 🌟 核心修复：每次重启物理引擎时，强制清空上一轮遗留的参数缓存！
         # 这样它就会乖乖地变成一张白纸，死死等待主控节点输入新的数量。
         if rospy.has_param('/swarm_num_drones'):
@@ -27,14 +27,14 @@ class SwarmSimulationNode():
         rospy.Subscriber("/swarm/cmd_vel", Vector3StampedArray, self.callback_cmd, queue_size=1)
 
         # =================================================================
-        # 🚀 [FMS 模块]: 动态监听与热重置
+        # 🚀 [FLSM 模块]: 动态监听与热重置
         # 对比 baseline: 添加了 Timer 定期监听 ROS 参数的变化，使得模拟器可以在不重启的情况下扩展机队。
         # =================================================================
         rospy.Timer(rospy.Duration(0.5), self.check_param_update)
         rospy.Timer(rospy.Duration(1.0/RATE), self.timer_publish)
 
     def check_param_update(self, event):
-        # 🚀 [FMS 模块]: 数量变化检查逻辑
+        # 🚀 [FLSM 模块]: 数量变化检查逻辑
         if rospy.has_param('/swarm_num_drones'):
             new_num = rospy.get_param('/swarm_num_drones')
             if new_num != self.num_drones:
@@ -48,7 +48,7 @@ class SwarmSimulationNode():
                     self.respawn_swarm(new_num)
 
     def respawn_swarm(self, num):
-        # 🚀 [FMS 模块]: 精准数量生成与截断。
+        # 🚀 [FLSM 模块]: 精准数量生成与截断。
         # 🌟 新增：停机坪阵列的初始间距 (米)
         # 如果你觉得太挤，把 1.5 改成 2.0 或者更大！
         spacing = 1.5  
@@ -76,7 +76,7 @@ class SwarmSimulationNode():
         if len(self.swarm) == 0: return
         vels = np.zeros((len(msg.vector), 3))
         for i, v in enumerate(msg.vector):
-            if i < self.num_drones: # 🚀 [FMS 模块]: 防止越界下发指令
+            if i < self.num_drones: # 🚀 [FLSM 模块]: 防止越界下发指令
                 vels[i] = [v.x, v.y, v.z]
         self.swarm += vels * (1.0/RATE)
 
