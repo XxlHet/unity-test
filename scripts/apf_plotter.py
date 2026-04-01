@@ -140,7 +140,67 @@ def _safe_id_array(ids, upper_bound):
     return arr[(arr >= 0) & (arr < upper_bound)]
 
 
-def _draw_3d_group(ax, df, ids, color, linestyle, linewidth, alpha, label, max_draw):
+def _adaptive_flsm_profile(drone_count):
+    if drone_count <= 42:
+        return {
+            "max_draw": 72,
+            "stayed_draw": 64,
+            "traj_points": 120,
+            "stayed_tail_ratio": 1.0,
+            "stayed_linewidth": 1.1,
+            "stayed_alpha": 0.35,
+            "shape_marker": 55,
+        }
+    if drone_count <= 84:
+        return {
+            "max_draw": 72,
+            "stayed_draw": 42,
+            "traj_points": 72,
+            "stayed_tail_ratio": 0.72,
+            "stayed_linewidth": 0.95,
+            "stayed_alpha": 0.28,
+            "shape_marker": 46,
+        }
+    return {
+        "max_draw": 64,
+        "stayed_draw": 28,
+        "traj_points": 42,
+        "stayed_tail_ratio": 0.42,
+        "stayed_linewidth": 0.85,
+        "stayed_alpha": 0.22,
+        "shape_marker": 34,
+    }
+
+
+def _sample_traj(traj, max_points, tail_ratio=1.0):
+    if len(traj) <= 1:
+        return traj
+
+    tail_ratio = max(0.05, min(1.0, float(tail_ratio)))
+    if tail_ratio < 1.0:
+        keep = max(2, int(len(traj) * tail_ratio))
+        traj = traj.tail(keep)
+
+    if len(traj) <= max_points:
+        return traj
+
+    idx = np.linspace(0, len(traj) - 1, max_points, dtype=int)
+    return traj.iloc[idx]
+
+
+def _draw_3d_group(
+    ax,
+    df,
+    ids,
+    color,
+    linestyle,
+    linewidth,
+    alpha,
+    label,
+    max_draw,
+    traj_max_points=120,
+    tail_ratio=1.0,
+):
     if ids.size == 0:
         return
 
@@ -159,6 +219,7 @@ def _draw_3d_group(ax, df, ids, color, linestyle, linewidth, alpha, label, max_d
         traj = df[df["DroneID"] == drone_id]
         if len(traj) < 2:
             continue
+        traj = _sample_traj(traj, max_points=traj_max_points, tail_ratio=tail_ratio)
         ax.plot(
             traj["X"],
             traj["Y"],
@@ -172,7 +233,7 @@ def _draw_3d_group(ax, df, ids, color, linestyle, linewidth, alpha, label, max_d
         first = False
 
 
-def _draw_2d_group(ax, df, ids, color, linestyle, linewidth, alpha, label, max_draw):
+def _draw_2d_group(ax, df, ids, color, linestyle, linewidth, alpha, label, max_draw, traj_max_points=120):
     if ids.size == 0:
         return
 
@@ -191,6 +252,7 @@ def _draw_2d_group(ax, df, ids, color, linestyle, linewidth, alpha, label, max_d
         traj = df[df["DroneID"] == drone_id]
         if len(traj) < 2:
             continue
+        traj = _sample_traj(traj, max_points=traj_max_points, tail_ratio=1.0)
         ax.plot(
             traj["X"],
             traj["Y"],
@@ -203,6 +265,33 @@ def _draw_2d_group(ax, df, ids, color, linestyle, linewidth, alpha, label, max_d
         first = False
 
 
+def _detail_draw_cap(drone_count):
+    if drone_count <= 60:
+        return drone_count
+    if drone_count <= 120:
+        return 100
+    return 120
+
+
+def _apply_shape_focus_view(ax, shape_end_df):
+    if shape_end_df is None or shape_end_df.empty:
+        return
+
+    x_min, x_max = float(shape_end_df["X"].min()), float(shape_end_df["X"].max())
+    y_min, y_max = float(shape_end_df["Y"].min()), float(shape_end_df["Y"].max())
+    z_min, z_max = float(shape_end_df["Z"].min()), float(shape_end_df["Z"].max())
+
+    x_span = max(0.25, x_max - x_min)
+    y_span = max(0.25, y_max - y_min)
+    z_span = max(0.25, z_max - z_min)
+
+    margin = max(0.6, 0.35 * max(x_span, y_span, z_span))
+    ax.set_xlim(x_min - margin, x_max + margin)
+    ax.set_ylim(y_min - margin, y_max + margin)
+    ax.set_zlim(max(0.0, z_min - 0.9 * margin), z_max + margin)
+    ax.set_box_aspect((x_span + 2 * margin, y_span + 2 * margin, z_span + 2 * margin))
+
+
 def generate_fms_srm_report(controller, phase_name, phase_idx):
     if not controller.trajectory_log or not getattr(controller, "fms_dir", ""):
         return
@@ -212,7 +301,8 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
 
     drone_ids = sorted(df["DroneID"].astype(int).unique().tolist())
     drone_count = len(drone_ids)
-    max_draw = 72 if drone_count <= 84 else 96
+    profile = _adaptive_flsm_profile(drone_count)
+    max_draw = profile["max_draw"]
 
     phase_prev = int(getattr(controller, "phase_prev_active_num", 0))
     phase_shape = int(getattr(controller, "phase_shape_num", 0))
@@ -230,31 +320,52 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
         return_ids = np.arange(phase_shape, phase_prev, dtype=int)
 
     shape_ids = np.arange(phase_shape, dtype=int)
-    stayed_shape_ids = np.arange(min(phase_prev, phase_shape), dtype=int)
 
     home = getattr(controller, "global_home_poses", None)
 
     fig = plt.figure(figsize=(24, 7.2))
     ax1 = fig.add_subplot(131, projection="3d")
-    ax1.set_title(f"Phase {phase_idx}: [{phase_name}] Trajectory Groups", fontweight="bold")
+    ax1.set_title(f"Phase {phase_idx}: [{phase_name}] Formation Result", fontweight="bold")
 
     if isinstance(home, np.ndarray) and home.size > 0:
-        ax1.scatter(home[:, 0], home[:, 1], home[:, 2], color="#D5DBDB", marker="o", s=10, alpha=0.35, label="Ground Grid")
+        ax1.scatter(home[:, 0], home[:, 1], home[:, 2], color="#D5DBDB", marker="o", s=8, alpha=0.16, label="Ground Grid")
 
-    _draw_3d_group(ax1, df, stayed_shape_ids, "#2CA02C", "-", 1.1, 0.35, "Shape (already airborne)", max_draw)
-    _draw_3d_group(ax1, df, new_launch_ids, "#1F77B4", "-", 1.8, 0.72, "New Launch This Phase", max_draw)
-    _draw_3d_group(ax1, df, return_ids, "#FF7F0E", "--", 1.6, 0.76, "Returning This Phase", max_draw)
+    # Left panel only shows the real formed shape/end-state (no trajectory lines).
 
     last_df = df.sort_values("Time").groupby("DroneID", as_index=False).tail(1)
     if shape_ids.size > 0:
         shape_end = last_df[last_df["DroneID"].isin(shape_ids.tolist())]
         if not shape_end.empty:
-            ax1.scatter(shape_end["X"], shape_end["Y"], shape_end["Z"], color="#2ECC71", marker="*", s=55, alpha=0.95, label="Shape Endpoints")
+            if len(shape_end) > 60:
+                ax1.scatter(
+                    shape_end["X"],
+                    shape_end["Y"],
+                    shape_end["Z"],
+                    c=shape_end["Z"],
+                    cmap="viridis",
+                    marker="o",
+                    s=max(12, profile["shape_marker"] - 12),
+                    alpha=0.82,
+                    edgecolors="none",
+                    label="Shape Endpoints (density)",
+                )
+            else:
+                ax1.scatter(
+                    shape_end["X"],
+                    shape_end["Y"],
+                    shape_end["Z"],
+                    color="#2ECC71",
+                    marker="*",
+                    s=profile["shape_marker"],
+                    alpha=0.95,
+                    label="Shape Endpoints",
+                )
     if return_ids.size > 0:
         ret_end = last_df[last_df["DroneID"].isin(return_ids.tolist())]
         if not ret_end.empty:
             ax1.scatter(ret_end["X"], ret_end["Y"], ret_end["Z"], color="#AAB7B8", marker="o", s=20, alpha=0.9, label="Returned/Landed Endpoints")
 
+    _apply_shape_focus_view(ax1, shape_end if shape_ids.size > 0 else None)
     ax1.view_init(elev=23, azim=42)
     ax1.set_xlabel("X (m)")
     ax1.set_ylabel("Y (m)")
@@ -266,8 +377,8 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     if isinstance(home, np.ndarray) and home.size > 0:
         ax2.scatter(home[:, 0], home[:, 1], color="#D5DBDB", marker="o", s=10, alpha=0.30, label="Ground Grid")
 
-    _draw_2d_group(ax2, df, new_launch_ids, "#1F77B4", "-", 1.4, 0.68, "Launch Trajectory", max_draw)
-    _draw_2d_group(ax2, df, return_ids, "#FF7F0E", "--", 1.4, 0.72, "Return Trajectory", max_draw)
+    _draw_2d_group(ax2, df, new_launch_ids, "#1F77B4", "-", 1.25, 0.68, "Launch Trajectory", max_draw, traj_max_points=profile["traj_points"])
+    _draw_2d_group(ax2, df, return_ids, "#FF7F0E", "--", 1.25, 0.72, "Return Trajectory", max_draw, traj_max_points=profile["traj_points"])
 
     if isinstance(home, np.ndarray) and home.size > 0:
         if new_launch_ids.size > 0:
@@ -280,7 +391,7 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     if shape_ids.size > 0:
         shape_end_2d = last_df[last_df["DroneID"].isin(shape_ids.tolist())]
         if not shape_end_2d.empty:
-            ax2.scatter(shape_end_2d["X"], shape_end_2d["Y"], marker="*", s=42, color="#2ECC71", alpha=0.95, label="Shape End")
+            ax2.scatter(shape_end_2d["X"], shape_end_2d["Y"], marker="*", s=max(28, profile["shape_marker"] - 6), color="#2ECC71", alpha=0.95, label="Shape End")
 
     ax2.set_xlabel("X (m)")
     ax2.set_ylabel("Y (m)")
@@ -330,4 +441,91 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
 
     plt.tight_layout()
     plt.savefig(os.path.join(controller.fms_dir, f"{phase_idx:02d}_{phase_name}.png"), dpi=320)
+    plt.close()
+
+    # Extra detailed trajectory-only figure: match global-return style by showing only moving groups.
+    detail_cap = _detail_draw_cap(drone_count)
+    detail_points = 180 if drone_count <= 84 else 140
+
+    fig_detail = plt.figure(figsize=(12.5, 10))
+    axd = fig_detail.add_subplot(111, projection="3d")
+    axd.set_title(f"Phase {phase_idx}: [{phase_name}] Detailed 3D Trajectories", fontweight="bold")
+
+    if isinstance(home, np.ndarray) and home.size > 0:
+        axd.scatter(home[:, 0], home[:, 1], home[:, 2], color="#D5DBDB", marker="o", s=7, alpha=0.22, label="Ground Grid")
+
+    _draw_3d_group(
+        axd,
+        df,
+        new_launch_ids,
+        "#FF9F43",
+        "--",
+        1.35,
+        0.78,
+        "Forming Trajectory",
+        detail_cap,
+        traj_max_points=detail_points,
+        tail_ratio=1.0,
+    )
+    _draw_3d_group(
+        axd,
+        df,
+        return_ids,
+        "#FF7F0E",
+        "--",
+        1.35,
+        0.66,
+        "Returning",
+        detail_cap,
+        traj_max_points=detail_points,
+        tail_ratio=1.0,
+    )
+
+    if new_launch_ids.size > 0:
+        launch_start = df[df["DroneID"].isin(new_launch_ids.tolist())].sort_values("Time").groupby("DroneID", as_index=False).head(1)
+        if not launch_start.empty:
+            axd.scatter(
+                launch_start["X"],
+                launch_start["Y"],
+                launch_start["Z"],
+                color="#95A5A6",
+                marker="o",
+                s=10,
+                alpha=0.75,
+                label="Launch Startpoints",
+            )
+
+    if shape_ids.size > 0:
+        shape_end = last_df[last_df["DroneID"].isin(shape_ids.tolist())]
+        if not shape_end.empty:
+            axd.scatter(
+                shape_end["X"],
+                shape_end["Y"],
+                shape_end["Z"],
+                c=shape_end["Z"],
+                cmap="viridis",
+                marker="o",
+                s=18,
+                alpha=0.90,
+                edgecolors="none",
+                label="Shape Endpoints",
+            )
+    if return_ids.size > 0:
+        ret_end = last_df[last_df["DroneID"].isin(return_ids.tolist())]
+        if not ret_end.empty:
+            axd.scatter(ret_end["X"], ret_end["Y"], ret_end["Z"], color="#95A5A6", marker="o", s=13, alpha=0.85, label="Returned Endpoints")
+
+    axd.view_init(elev=24, azim=36)
+    axd.set_xlabel("X (m)")
+    axd.set_ylabel("Y (m)")
+    axd.set_zlabel("Z (m)")
+    axd.legend(loc="best", fontsize=9)
+
+    fig_detail.suptitle(
+        f"Detailed Trajectory Map | phase={phase_idx}, drones={drone_count}, shown_per_group<= {detail_cap}",
+        fontsize=11,
+        y=0.98,
+    )
+    plt.tight_layout()
+    plt.savefig(os.path.join(controller.fms_dir, f"{phase_idx:02d}_{phase_name}_trajectory_detail.png"), dpi=360)
     plt.close()
