@@ -5,8 +5,14 @@ import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import pandas as pd
 import numpy as np
+
+try:
+    from scipy.spatial import ConvexHull
+except Exception:
+    ConvexHull = None
 
 
 def _prepare_plot_series(df, col):
@@ -292,6 +298,24 @@ def _apply_shape_focus_view(ax, shape_end_df):
     ax.set_box_aspect((x_span + 2 * margin, y_span + 2 * margin, z_span + 2 * margin))
 
 
+def _draw_shape_hull(ax, shape_end_df, face_color="#2ECC71"):
+    if ConvexHull is None or shape_end_df is None or shape_end_df.empty:
+        return
+
+    points = shape_end_df[["X", "Y", "Z"]].to_numpy(dtype=float)
+    points = np.unique(np.round(points, decimals=6), axis=0)
+    if points.shape[0] < 4:
+        return
+
+    try:
+        hull = ConvexHull(points)
+        faces = [points[simplex] for simplex in hull.simplices]
+        poly = Poly3DCollection(faces, facecolors=face_color, edgecolors="none", alpha=0.12)
+        ax.add_collection3d(poly)
+    except Exception:
+        return
+
+
 def generate_fms_srm_report(controller, phase_name, phase_idx):
     if not controller.trajectory_log or not getattr(controller, "fms_dir", ""):
         return
@@ -320,6 +344,7 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
         return_ids = np.arange(phase_shape, phase_prev, dtype=int)
 
     shape_ids = np.arange(phase_shape, dtype=int)
+    changed_ids = np.unique(np.concatenate([new_launch_ids, return_ids])) if (new_launch_ids.size > 0 or return_ids.size > 0) else np.array([], dtype=int)
 
     home = getattr(controller, "global_home_poses", None)
 
@@ -336,29 +361,36 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     if shape_ids.size > 0:
         shape_end = last_df[last_df["DroneID"].isin(shape_ids.tolist())]
         if not shape_end.empty:
-            if len(shape_end) > 60:
+            changed_shape_end = shape_end[shape_end["DroneID"].isin(changed_ids.tolist())] if changed_ids.size > 0 else shape_end.iloc[0:0]
+            stable_shape_end = shape_end[~shape_end["DroneID"].isin(changed_ids.tolist())] if changed_ids.size > 0 else shape_end
+
+            _draw_shape_hull(ax1, shape_end, face_color="#2ECC71")
+
+            if not stable_shape_end.empty:
                 ax1.scatter(
-                    shape_end["X"],
-                    shape_end["Y"],
-                    shape_end["Z"],
-                    c=shape_end["Z"],
-                    cmap="viridis",
-                    marker="o",
-                    s=max(12, profile["shape_marker"] - 12),
-                    alpha=0.82,
-                    edgecolors="none",
-                    label="Shape Endpoints (density)",
-                )
-            else:
-                ax1.scatter(
-                    shape_end["X"],
-                    shape_end["Y"],
-                    shape_end["Z"],
+                    stable_shape_end["X"],
+                    stable_shape_end["Y"],
+                    stable_shape_end["Z"],
                     color="#2ECC71",
-                    marker="*",
-                    s=profile["shape_marker"],
+                    marker="o",
+                    s=max(18, profile["shape_marker"] - 8),
                     alpha=0.95,
+                    edgecolors="white",
+                    linewidths=0.25,
                     label="Shape Endpoints",
+                )
+            if not changed_shape_end.empty:
+                ax1.scatter(
+                    changed_shape_end["X"],
+                    changed_shape_end["Y"],
+                    changed_shape_end["Z"],
+                    color="#F39C12",
+                    marker="o",
+                    s=max(28, profile["shape_marker"] + 2),
+                    alpha=0.98,
+                    edgecolors="white",
+                    linewidths=0.45,
+                    label="Changed This Phase",
                 )
     if return_ids.size > 0:
         ret_end = last_df[last_df["DroneID"].isin(return_ids.tolist())]
@@ -391,7 +423,12 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     if shape_ids.size > 0:
         shape_end_2d = last_df[last_df["DroneID"].isin(shape_ids.tolist())]
         if not shape_end_2d.empty:
-            ax2.scatter(shape_end_2d["X"], shape_end_2d["Y"], marker="*", s=max(28, profile["shape_marker"] - 6), color="#2ECC71", alpha=0.95, label="Shape End")
+            changed_shape_end_2d = shape_end_2d[shape_end_2d["DroneID"].isin(changed_ids.tolist())] if changed_ids.size > 0 else shape_end_2d.iloc[0:0]
+            stable_shape_end_2d = shape_end_2d[~shape_end_2d["DroneID"].isin(changed_ids.tolist())] if changed_ids.size > 0 else shape_end_2d
+            if not stable_shape_end_2d.empty:
+                ax2.scatter(stable_shape_end_2d["X"], stable_shape_end_2d["Y"], marker="o", s=max(24, profile["shape_marker"] - 10), color="#2ECC71", alpha=0.92, label="Shape End")
+            if not changed_shape_end_2d.empty:
+                ax2.scatter(changed_shape_end_2d["X"], changed_shape_end_2d["Y"], marker="o", s=max(32, profile["shape_marker"]), color="#F39C12", alpha=0.98, edgecolors="white", linewidths=0.4, label="Changed This Phase")
 
     ax2.set_xlabel("X (m)")
     ax2.set_ylabel("Y (m)")
@@ -498,18 +535,34 @@ def generate_fms_srm_report(controller, phase_name, phase_idx):
     if shape_ids.size > 0:
         shape_end = last_df[last_df["DroneID"].isin(shape_ids.tolist())]
         if not shape_end.empty:
-            axd.scatter(
-                shape_end["X"],
-                shape_end["Y"],
-                shape_end["Z"],
-                c=shape_end["Z"],
-                cmap="viridis",
-                marker="o",
-                s=18,
-                alpha=0.90,
-                edgecolors="none",
-                label="Shape Endpoints",
-            )
+            changed_shape_end = shape_end[shape_end["DroneID"].isin(changed_ids.tolist())] if changed_ids.size > 0 else shape_end.iloc[0:0]
+            stable_shape_end = shape_end[~shape_end["DroneID"].isin(changed_ids.tolist())] if changed_ids.size > 0 else shape_end
+            if not stable_shape_end.empty:
+                axd.scatter(
+                    stable_shape_end["X"],
+                    stable_shape_end["Y"],
+                    stable_shape_end["Z"],
+                    color="#2ECC71",
+                    marker="o",
+                    s=16,
+                    alpha=0.92,
+                    edgecolors="white",
+                    linewidths=0.2,
+                    label="Shape Endpoints",
+                )
+            if not changed_shape_end.empty:
+                axd.scatter(
+                    changed_shape_end["X"],
+                    changed_shape_end["Y"],
+                    changed_shape_end["Z"],
+                    color="#F39C12",
+                    marker="o",
+                    s=24,
+                    alpha=0.98,
+                    edgecolors="white",
+                    linewidths=0.3,
+                    label="Changed This Phase",
+                )
     if return_ids.size > 0:
         ret_end = last_df[last_df["DroneID"].isin(return_ids.tolist())]
         if not ret_end.empty:
