@@ -7,6 +7,10 @@ import rospy
 from sdf import box, sphere, write_binary_stl, rounded_box, capsule
 from sdf import generate
 from apf_controller import APFSwarmController
+try:
+    from afc_apf_controller import AFCAPFSwarmController
+except ImportError:
+    from scripts.afc_apf_controller import AFCAPFSwarmController
 from gpt_sdf import SDFDialog, SDFModel, CURRENT_MODEL
 import threading
 import os
@@ -15,6 +19,32 @@ import sys  # 🌟 新增：用于刷新缓冲区和检测终端状态
 from point_distributor import PointDistributer
 
 class SwarmControllerNode():
+    def _normalize_controller_mode(self, raw_mode):
+        token = str(raw_mode).strip().lower()
+        if token in ["1", "apf"]:
+            return "1"
+        if token in ["2", "afc", "afc-apf", "afc_apf"]:
+            return "2"
+        return "1"
+
+    def _controller_mode_name(self, mode_id):
+        return "APF" if mode_id == "1" else "AFC-APF"
+
+    def _build_controller(self, mode_id, min_dist):
+        mode_id = self._normalize_controller_mode(mode_id)
+        if mode_id == "2":
+            controller = AFCAPFSwarmController(max_vel=0.9, min_dist=min_dist)
+        else:
+            controller = APFSwarmController(max_vel=0.9, min_dist=min_dist)
+
+        self.controller_mode_id = mode_id
+        controller.log_dir = self.save_dir
+        controller.fms_dir = self.fms_dir
+        controller.enable_dca = self.enable_dca
+        if self.home_poses is not None:
+            controller.global_home_poses = self.home_poses.copy()
+        return controller
+
     def get_input(self, prompt, default_val):
         """🛡️ 工业级输入捕获：防止 roslaunch 后台模式导致的 EOFError 崩溃"""
         sys.stdout.flush()  # 强制刷新缓冲区，确保打印能立刻显示
@@ -66,6 +96,8 @@ class SwarmControllerNode():
         print("--- ⚙️ Algorithm Module Configuration ---")
         module_input = self.get_input(">>> [DCA] Enable Dynamic Configuration Assignment? [y/N]: ", "n")
         self.enable_dca = True if module_input.lower() == 'y' else False
+        mode_input = self.get_input(">>> [CTRL] Select controller mode [1=APF, 2=AFC-APF] (Default 1): ", "1")
+        selected_mode_id = self._normalize_controller_mode(mode_input)
         fms_plot_input = self.get_input(">>> [FLSM] Enable plot generation for the whole run? [y/N]: ", "n")
         self.enable_fms_srm_plots = (fms_plot_input.strip().lower() == 'y')
         
@@ -94,23 +126,23 @@ class SwarmControllerNode():
         
         self.phase_idx = 1 # 🌟 新增：多轮次变换的阶段计数器
         
-        print("\n" + "="*60)
-        print(f"[*] [FlockGPT-AFS] Mode: DCA Enabled = {self.enable_dca}")
-        print(f"[*] [FlockGPT-AFS] Safety Baseline : {self.safety_baseline}m")
-        print(f"[*] [FLSM] Fleet Capacity: {self.fleet_capacity} drones (Simulating...)")
-        print("="*60 + "\n")
-        sys.stdout.flush()
-
         self.is_running = False 
         self.goals = []
         self.start_poses = None
         self.home_poses = None  
         self.trigger_return = False 
         
-        self.controller = APFSwarmController(max_vel=0.9, min_dist=self.safety_baseline)
-        self.controller.log_dir = self.save_dir
-        self.controller.fms_dir = self.fms_dir  # 🌟 挂载 FLSM 专属输出目录
-        self.controller.enable_dca = self.enable_dca
+        self.controller = self._build_controller(selected_mode_id, self.safety_baseline)
+
+        print("\n" + "="*60)
+        print(
+            f"[*] [FlockGPT-AFS] Mode: DCA Enabled = {self.enable_dca}, "
+            f"Controller = {self.controller_mode_id}({self._controller_mode_name(self.controller_mode_id)})"
+        )
+        print(f"[*] [FlockGPT-AFS] Safety Baseline : {self.safety_baseline}m")
+        print(f"[*] [FLSM] Fleet Capacity: {self.fleet_capacity} drones (Simulating...)")
+        print("="*60 + "\n")
+        sys.stdout.flush()
         
         self.model = SDFModel()
         self.dialog = SDFDialog()
@@ -264,7 +296,13 @@ class SwarmControllerNode():
                 break
             
             shape_name = user_input.replace(" ", "_")
-            mode_str = "DCA" if self.enable_dca else "Base"
+            if self.controller_mode_id == "2":
+                mode_str = "AFC"
+            else:
+                mode_str = "DCA" if self.enable_dca else "Base"
+
+            self.controller.result_mode_prefix = mode_str
+            self.controller.result_algo_label = "AFC (AFC-APF)" if mode_str == "AFC" else ("DCA (Ours)" if mode_str == "DCA" else "Baseline")
             
             # 💡 将安全基线嵌入文件名，供比对脚本读取
             sd_str = f"_SD{self.controller.min_dist:.2f}"
@@ -319,7 +357,11 @@ class SwarmControllerNode():
             print("--- ⚙️ Algorithm Module Configuration (New Round) ---")
             module_input = self.get_input(f">>> [DCA] Enable Dynamic Configuration Assignment? (Current: {self.enable_dca}) [y/N]: ", "n")
             self.enable_dca = True if module_input.lower() == 'y' else False
-            self.controller.enable_dca = self.enable_dca
+            mode_input = self.get_input(
+                f">>> [CTRL] Select controller mode [1=APF, 2=AFC-APF] (Current: {self.controller_mode_id}): ",
+                self.controller_mode_id,
+            )
+            next_mode_id = self._normalize_controller_mode(mode_input)
 
             # 🎯 循环中的动态安全基线更新 (升级为 0.35m 默认，0.3-1.0m 范围)
             if self.enable_dca:
@@ -335,7 +377,20 @@ class SwarmControllerNode():
             else:
                 self.controller.min_dist = 0.35 # Baseline 强制锁死 0.35
 
-            print(f"[*] [FlockGPT-AFS] Mode updated: DCA Enabled={self.enable_dca}, Safety Baseline={self.controller.min_dist}m")
+            self.safety_baseline = self.controller.min_dist
+            if next_mode_id != self.controller_mode_id:
+                self.controller = self._build_controller(next_mode_id, self.safety_baseline)
+                if self.home_poses is not None:
+                    self.controller.global_home_poses = self.home_poses.copy()
+            else:
+                self.controller.enable_dca = self.enable_dca
+                self.controller.min_dist = self.safety_baseline
+
+            print(
+                f"[*] [FlockGPT-AFS] Mode updated: DCA Enabled={self.enable_dca}, "
+                f"Controller={self.controller_mode_id}({self._controller_mode_name(self.controller_mode_id)}), "
+                f"Safety Baseline={self.controller.min_dist}m"
+            )
             sys.stdout.flush()
 
             self.goals = []          

@@ -33,8 +33,19 @@ def generate_plots(controller):
     if not controller.last_csv_path or not os.path.exists(controller.last_csv_path):
         return
 
-    mode_prefix = "DCA" if controller.enable_dca else "Base"
-    algo_label = "DCA (Ours)" if controller.enable_dca else "Baseline"
+    mode_prefix = getattr(controller, "result_mode_prefix", None)
+    if not mode_prefix:
+        mode_prefix = "DCA" if controller.enable_dca else "Base"
+
+    algo_label = getattr(controller, "result_algo_label", None)
+    if not algo_label:
+        if mode_prefix == "AFC":
+            algo_label = "AFC (AFC-APF)"
+        else:
+            algo_label = "DCA (Ours)" if controller.enable_dca else "Baseline"
+
+    is_dca_style = (mode_prefix == "DCA")
+    is_afc_style = (mode_prefix == "AFC")
 
     print(f"\n[*] Generating plots for [{algo_label}] mode...")
     try:
@@ -46,22 +57,22 @@ def generate_plots(controller):
             "Target_Error(m)": (
                 "Convergence Error Comparison",
                 "Mean Error (m)",
-                "#2ECC71" if controller.enable_dca else "#E74C3C",
+                "#2ECC71" if is_dca_style else ("#3498DB" if is_afc_style else "#E74C3C"),
             ),
             "Min_Distance(m)": (
                 "Minimum Distance Comparison",
                 "Min Distance (m)",
-                "#2ECC71" if controller.enable_dca else "#E74C3C",
+                "#2ECC71" if is_dca_style else ("#3498DB" if is_afc_style else "#E74C3C"),
             ),
             "Avg_Velocity(m/s)": (
                 "Average Velocity Comparison",
                 "Avg Velocity (m/s)",
-                "#2ECC71" if controller.enable_dca else "#E74C3C",
+                "#2ECC71" if is_dca_style else ("#3498DB" if is_afc_style else "#E74C3C"),
             ),
             "Comp_Time(ms)": (
                 "Computation Time per Step",
                 "Time (ms)",
-                "#F39C12" if controller.enable_dca else "#8E44AD",
+                "#F39C12" if (is_dca_style or is_afc_style) else "#8E44AD",
             ),
             "Collisions": (
                 "Cumulative Safety Violations",
@@ -85,9 +96,9 @@ def generate_plots(controller):
                     plt.plot(
                         x_data,
                         y_data,
-                        linewidth=2.5 if controller.enable_dca else 1.5,
+                        linewidth=2.5 if (is_dca_style or is_afc_style) else 1.5,
                         color=color,
-                        linestyle="-" if controller.enable_dca else "--",
+                        linestyle="-" if (is_dca_style or is_afc_style) else "--",
                         label=algo_label,
                         alpha=0.9,
                     )
