@@ -100,7 +100,8 @@ def generate_multi_comparison_plots():
         'Avg_Velocity(m/s)': ('Average Velocity Comparison', 'Avg Velocity (m/s)'),
         # 🌟 新增：计算耗时与碰撞次数对比
         'Comp_Time(ms)': ('Computation Time per Step', 'Time (ms)'),
-        'Collisions': ('Cumulative Safety Violations', 'Violation Count')
+        'Collisions': ('Cumulative Safety Violations', 'Violation Count'),
+        'Hard_Collisions': ('Cumulative Hard Collisions', 'Hard Collision Count')
     }
 
     colors = plt.cm.tab10.colors
@@ -123,11 +124,15 @@ def generate_multi_comparison_plots():
                 linestyle = linestyles[idx % len(linestyles)]
                 linewidth = 2.5 if idx == 0 else 1.8 
 
-                # 🌟 新增：如果是碰撞次数，强制使用累加 (cumsum) 画阶梯图！
-                y_data = y_series.cumsum() if col == 'Collisions' else y_series
+                # 🌟 新增：碰撞类指标统一使用累加 (cumsum) 画阶梯图
+                y_data = y_series.cumsum() if col in ('Collisions', 'Hard_Collisions') else y_series
                 
-                plt.plot(x_data, y_data, linewidth=linewidth, color=color, 
-                         linestyle=linestyle, label=labels[idx], alpha=0.9)
+                if col in ('Collisions', 'Hard_Collisions'):
+                    plt.step(x_data, y_data, where='post', linewidth=linewidth, color=color,
+                             linestyle=linestyle, label=labels[idx], alpha=0.95)
+                else:
+                    plt.plot(x_data, y_data, linewidth=linewidth, color=color,
+                             linestyle=linestyle, label=labels[idx], alpha=0.9)
                 plotted_any = True
                 
                 if not y_data.empty:
@@ -184,7 +189,7 @@ def generate_multi_comparison_plots():
                 plt.ylim(bottom=0.0, top=max(15.0, global_max * 1.2))
                 
             # 🌟 新增：碰撞次数的绝对安全底线 (0 次)
-            elif col == 'Collisions':
+            elif col in ('Collisions', 'Hard_Collisions'):
                 plt.axhline(y=0, color='black', linestyle=':', label='Ideal (Zero)')
                 plt.ylim(bottom=-0.5, top=max(1.0, global_max + 1.5))
 
