@@ -27,9 +27,14 @@ def save_to_json(filename, data):
 USE_CLOUD_API = False  # 设为 False 默认使用本地 3060 显卡
 
 if USE_CLOUD_API:
-    openai.api_base = "https://api.deepseek.com/v1"
-    openai.api_key = "sk-请在此处替换为你的云端API_KEY" 
-    CURRENT_MODEL = "deepseek-coder"
+    # openai.api_base = "https://api.openai.com/v1"
+    # openai.api_key = "sk-请在此处替换为你的OpenAI_API_KEY"
+    # CURRENT_MODEL = "gpt-4o-mini"
+
+    # 阿里云百炼（DashScope OpenAI 兼容模式）
+    openai.api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    openai.api_key = os.getenv("DASHSCOPE_API_KEY", "sk-700b6a771d374099b1b2b85d4837b5b4")
+    CURRENT_MODEL = "qvq-max-2025-03-25"
 else:
     openai.api_base = "http://localhost:11434/v1"
     openai.api_key = "ollama"  
@@ -358,7 +363,7 @@ class SDFDialog:
         gpt4_input = self.system_prompt + user_input + ". The last line must be f.save('out.stl')."
 
         response = openai.ChatCompletion.create(
-            model="qwen2.5-coder:7b",
+            model=CURRENT_MODEL,
             max_tokens=1000,
             temperature=0,
             messages=self.messages + [{"role": "user", "content": user_input},
